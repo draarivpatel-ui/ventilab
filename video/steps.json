@@ -73,7 +73,8 @@
 
   {"do": "at", "s": 137.16},
   {"do": "scrollTo", "selector": "#trendTitle", "ms": 1200, "offset": 200},
-  {"do": "click", "selector": "#tableToggle", "ms": 700},
+  {"do": "move", "selector": "#tableToggle", "ms": 600},
+  {"do": "eval", "js": "document.getElementById('tableToggle').click()"},
   {"do": "move", "selector": "#dataTable", "ms": 700},
   {"do": "at", "s": 142.5},
   {"do": "scrollTo", "selector": "#verifyGrid", "ms": 1000, "offset": 100},
