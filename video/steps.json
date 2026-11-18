@@ -72,13 +72,15 @@
   {"do": "move", "selector": "#verifyGrid", "ms": 900},
 
   {"do": "at", "s": 137.16},
-  {"do": "move", "selector": "#verifyGrid .verify-item", "ms": 900},
-  {"do": "click", "selector": "#tableToggle", "ms": 800},
-  {"do": "scrollTo", "selector": "#dataTable", "ms": 900, "offset": 100},
-  {"do": "move", "selector": "#dataTable", "ms": 800},
+  {"do": "scrollTo", "selector": "#trendTitle", "ms": 1200, "offset": 80},
+  {"do": "click", "selector": "#tableToggle", "ms": 700},
+  {"do": "move", "selector": "#dataTable", "ms": 700},
+  {"do": "at", "s": 142.5},
+  {"do": "scrollTo", "selector": "#verifyGrid", "ms": 1000, "offset": 100},
+  {"do": "move", "selector": "#verifyGrid .verify-item", "ms": 700},
 
   {"do": "at", "s": 146.66},
-  {"do": "scrollTo", "selector": "#actionCard", "ms": 1500, "offset": 110},
+  {"do": "scrollTo", "selector": "#actionCard", "ms": 1200, "offset": 110},
   {"do": "move", "selector": "#actionCard .card-title", "ms": 900},
 
   {"do": "at", "s": 150.96},
