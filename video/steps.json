@@ -1,149 +1,90 @@
-{
-  "name": "VentiLab demo choreography",
-  "viewport": {
-    "width": 1920,
-    "height": 1080
-  },
-  "steps": [
-    {
-      "id": "01-load-workbench",
-      "narration": "VentiLab turns a classroom into a clean-air physics laboratory. Everything runs offline in the browser, with no data leaving the device.",
-      "action": "observe",
-      "target": {
-        "selector": "#heroTitle",
-        "text": "Breathe easier."
-      },
-      "expect": {
-        "metric": "co2Peak",
-        "min": 2500
-      }
-    },
-    {
-      "id": "02-cross-ventilation",
-      "narration": "Switching to cross ventilation opens two opposing window paths. Wind and the indoor-outdoor temperature difference combine by root-sum-square.",
-      "action": "click",
-      "target": {
-        "selector": "input[name='windowMode'][value='cross']",
-        "label": "Cross"
-      },
-      "expect": {
-        "windowMode": "cross"
-      }
-    },
-    {
-      "id": "02b-open-windows",
-      "narration": "The window opening slider controls how much outdoor air reaches the room. Carbon dioxide falls as the opening grows.",
-      "action": "setRange",
-      "target": {
-        "selector": "#windowOpen",
-        "value": 80,
-        "label": "Window opening"
-      },
-      "expect": {
-        "windowOpen": 0.8,
-        "metric": "co2Peak",
-        "max": 1200
-      }
-    },
-    {
-      "id": "03-wildfire-preset",
-      "narration": "On a wildfire day the trade-off reverses. Outdoor fine particles reach one hundred eighty micrograms per cubic meter.",
-      "action": "select",
-      "target": {
-        "selector": "#presetSelect",
-        "value": "wildfire-smoke",
-        "label": "Wildfire smoke day"
-      },
-      "expect": {
-        "outdoorPM": 180
-      }
-    },
-    {
-      "id": "04-add-fan-box",
-      "narration": "A Corsi-Rosenthal fan box and a portable HEPA unit add clean-air delivery, shown as a separate equivalent airflow.",
-      "action": "setRange",
-      "target": {
-        "selector": "#crBoxes",
-        "value": 2,
-        "label": "Corsi-Rosenthal boxes"
-      },
-      "expect": {
-        "crBoxes": 2
-      }
-    },
-    {
-      "id": "05-add-hepa",
-      "narration": "Filtration cleans particles but does not remove exhaled carbon dioxide, so both models must be read together.",
-      "action": "setRange",
-      "target": {
-        "selector": "#hepaUnits",
-        "value": 1,
-        "label": "HEPA units"
-      },
-      "expect": {
-        "hepaUnits": 1
-      }
-    },
-    {
-      "id": "06-masks",
-      "narration": "Masks reduce emission; ventilation, filtration and upper-room UVGI speed removal.",
-      "action": "click",
-      "target": {
-        "selector": "#masks",
-        "label": "70% effective masks"
-      },
-      "expect": {
-        "masks": true
-      }
-    },
-    {
-      "id": "07-pareto-card",
-      "narration": "Each point trades cost against remaining risk, power, noise, carbon dioxide and particles. No point on the frontier is dominated.",
-      "action": "click",
-      "target": {
-        "selector": "#interventionList .intervention",
-        "index": 0,
-        "label": "First Pareto intervention card"
-      },
-      "expect": {
-        "interventionApplied": true
-      }
-    },
-    {
-      "id": "08-table-view",
-      "narration": "The table view exposes every simulated value, because identity is never carried by color alone.",
-      "action": "click",
-      "target": {
-        "selector": "#tableToggle",
-        "label": "Table view"
-      },
-      "expect": {
-        "tableVisible": true
-      }
-    },
-    {
-      "id": "09-theory-verification",
-      "narration": "Carbon-dioxide root-mean-square error is about eight times ten to the minus nine percent, far below the point-zero-five-percent target.",
-      "action": "observe",
-      "target": {
-        "selector": "#verifyGrid",
-        "label": "Theory verification panel"
-      },
-      "expect": {
-        "verificationPassed": true
-      }
-    },
-    {
-      "id": "10-action-card",
-      "narration": "The printable action card carries results back to class. VentiLab makes the invisible visible, and gives students an honest way to argue with numbers.",
-      "action": "observe",
-      "target": {
-        "selector": "#actionCard",
-        "label": "Printable action card"
-      },
-      "expect": {
-        "cardText": "Clean-Air Action Card"
-      }
-    }
-  ]
-}
+[
+  {"do": "at", "s": 0.5},
+  {"do": "move", "selector": "#heroTitle", "ms": 1300},
+
+  {"do": "at", "s": 11.21},
+  {"do": "scrollTo", "selector": "#metricGrid", "ms": 1500, "offset": 110},
+  {"do": "move", "selector": "#metricGrid .metric", "ms": 1100},
+
+  {"do": "at", "s": 19.83},
+  {"do": "scrollTo", "selector": "#classCanvas", "ms": 1300, "offset": 90},
+  {"do": "move", "selector": "#classCanvas", "ms": 1000},
+
+  {"do": "at", "s": 39.93},
+  {"do": "scrollTo", "selector": "#trendCanvas", "ms": 1300, "offset": 90},
+  {"do": "move", "selector": "#trendCanvas", "ms": 900},
+
+  {"do": "at", "s": 43.28},
+  {"do": "scrollTo", "selector": "#windowOpen", "ms": 1400, "offset": 180},
+  {"do": "click", "selector": "input[name='windowMode'][value='cross']", "ms": 900},
+  {"do": "at", "s": 48.14},
+  {"do": "move", "selector": "#windowOpen", "ms": 700},
+
+  {"do": "at", "s": 56.76},
+  {"do": "slide", "selector": "#windowOpen", "to": 80, "ms": 4000},
+  {"do": "scrollTo", "selector": "#trendCanvas", "ms": 1400, "offset": 90},
+  {"do": "move", "selector": "#trendCanvas", "ms": 900},
+
+  {"do": "at", "s": 63.63},
+  {"do": "scrollTo", "selector": "#presetSelect", "ms": 1300, "offset": 140},
+  {"do": "select", "selector": "#presetSelect", "value": "wildfire-smoke"},
+
+  {"do": "at", "s": 72.47},
+  {"do": "move", "selector": "#outdoorPMOut", "ms": 900},
+  {"do": "at", "s": 77.57},
+  {"do": "scrollTo", "selector": "#crBoxes", "ms": 900, "offset": 240},
+
+  {"do": "at", "s": 83.07},
+  {"do": "eval", "js": "(() => { const e=document.getElementById('crBoxes'); e.value='2'; e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); })()"},
+  {"do": "move", "selector": "#crBoxesOut", "ms": 700},
+  {"do": "eval", "js": "(() => { const e=document.getElementById('hepaUnits'); e.value='1'; e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); })()"},
+  {"do": "move", "selector": "#hepaUnitsOut", "ms": 700},
+  {"do": "scrollTo", "selector": "#metricGrid", "ms": 1200, "offset": 90},
+  {"do": "move", "selector": "#metricGrid .metric.is-particles", "ms": 900},
+
+  {"do": "at", "s": 91.82},
+  {"do": "scrollTo", "selector": "#trendCanvas", "ms": 1100, "offset": 90},
+  {"do": "move", "selector": "#trendCanvas", "ms": 900},
+
+  {"do": "at", "s": 99.08},
+  {"do": "scrollTo", "selector": "#masks", "ms": 1200, "offset": 300},
+  {"do": "click", "selector": "#masks", "ms": 900},
+  {"do": "at", "s": 105.22},
+  {"do": "scrollTo", "selector": "#trendCanvas", "ms": 1200, "offset": 90},
+  {"do": "move", "selector": "#trendCanvas", "ms": 900},
+
+  {"do": "at", "s": 108.69},
+  {"do": "scrollTo", "selector": "#paretoCanvas", "ms": 1500, "offset": 90},
+  {"do": "move", "selector": "#paretoCanvas", "ms": 1000},
+
+  {"do": "at", "s": 115.63},
+  {"do": "move", "selector": "#interventionList .intervention", "ms": 900},
+
+  {"do": "at", "s": 122.29},
+  {"do": "move", "selector": "#paretoCaption", "ms": 900},
+
+  {"do": "at", "s": 128.23},
+  {"do": "click", "selector": "#interventionList .intervention", "ms": 900},
+  {"do": "move", "selector": "#statusChip", "ms": 1100},
+
+  {"do": "at", "s": 131.78},
+  {"do": "scrollTo", "selector": "#verifyGrid", "ms": 1400, "offset": 110},
+  {"do": "move", "selector": "#verifyGrid", "ms": 900},
+
+  {"do": "at", "s": 137.16},
+  {"do": "move", "selector": "#verifyGrid .verify-item", "ms": 900},
+  {"do": "click", "selector": "#tableToggle", "ms": 800},
+  {"do": "scrollTo", "selector": "#dataTable", "ms": 900, "offset": 100},
+  {"do": "move", "selector": "#dataTable", "ms": 800},
+
+  {"do": "at", "s": 146.66},
+  {"do": "scrollTo", "selector": "#actionCard", "ms": 1500, "offset": 110},
+  {"do": "move", "selector": "#actionCard .card-title", "ms": 900},
+
+  {"do": "at", "s": 150.96},
+  {"do": "move", "selector": "#actionCard .card-grid", "ms": 1000},
+  {"do": "at", "s": 155.0},
+  {"do": "scrollTo", "selector": "#heroTitle", "ms": 2000, "offset": 80},
+  {"do": "move", "selector": "#heroTitle", "ms": 1000},
+  {"do": "at", "s": 158.0}
+]
