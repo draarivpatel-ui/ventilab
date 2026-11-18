@@ -72,7 +72,7 @@
   {"do": "move", "selector": "#verifyGrid", "ms": 900},
 
   {"do": "at", "s": 137.16},
-  {"do": "scrollTo", "selector": "#trendTitle", "ms": 1200, "offset": 80},
+  {"do": "scrollTo", "selector": "#trendTitle", "ms": 1200, "offset": 200},
   {"do": "click", "selector": "#tableToggle", "ms": 700},
   {"do": "move", "selector": "#dataTable", "ms": 700},
   {"do": "at", "s": 142.5},
