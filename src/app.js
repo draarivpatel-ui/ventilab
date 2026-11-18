@@ -110,10 +110,15 @@ function metricCard(label, value, unit, percent, kind, note) {
 function renderMetrics() {
   const m = evaluated.metrics;
   const isValid = Number.isFinite(m.co2Peak) && Number.isFinite(m.pmMean) && Number.isFinite(m.riskFinal);
-  const status = !isValid ? 'Solver error' : m.co2Peak >= 1500 ? 'High CO2 load' : m.co2Peak >= 1000 ? 'Elevated CO2' : 'Good air quality';
+  const status = !isValid ? 'Solver error'
+    : m.co2Peak >= 1500 ? 'High CO2 load'
+    : m.pmMean >= 80 ? 'High PM2.5 load'
+    : m.riskFinal >= 20 ? 'High infection risk'
+    : m.co2Peak >= 1000 ? 'Elevated CO2'
+    : 'Good air quality';
   const chip = $('statusChip');
   chip.textContent = status;
-  chip.className = `status-chip${!isValid || m.co2Peak >= 1500 ? ' chip-alert' : ''}`;
+  chip.className = `status-chip${!isValid || m.co2Peak >= 1500 || m.pmMean >= 80 || m.riskFinal >= 20 ? ' chip-alert' : ''}`;
   $('metricGrid').innerHTML = [
     metricCard('CO2 peak', fmt(m.co2Peak), 'ppm', (m.co2Peak / 2500) * 100, '', 'six-hour maximum'),
     metricCard('PM2.5 indoor mean', fmt(m.pmMean, 1), 'ug/m3', (m.pmMean / 200) * 100, 'is-particles', 'six-hour mean'),
