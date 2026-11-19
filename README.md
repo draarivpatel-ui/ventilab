@@ -1,5 +1,7 @@
 # VentiLab
 
+**Live workbench:** [https://aariv.me/ventilab/](https://aariv.me/ventilab/)
+
 **Classroom Clean-Air and Airborne Risk Physics Workbench**
 
 An offline, zero-dependency browser workbench for exploring how ventilation,
