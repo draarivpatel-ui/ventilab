@@ -60,7 +60,6 @@ export function drawClassroom(canvas, state) {
   const { ctx, width, height } = setupCanvas(canvas);
   const accent = css('--accent', '#14624a');
   const accentWash = css('--accent-wash', '#e5f1eb');
-  const ink = css('--ink', '#10231d');
   const ink2 = css('--ink-2', '#40554d');
   const ink3 = css('--ink-3', '#5f726a');
   const line = css('--line', '#d6e1db');
@@ -216,7 +215,6 @@ export function drawTrend(canvas, run, hoverIndex, onHover) {
   canvas.dataset.ratio = '0.404';
   const { ctx, width, height } = setupCanvas(canvas);
   const ink = css('--ink', '#10231d');
-  const ink2 = css('--ink-2', '#40554d');
   const ink3 = css('--ink-3', '#5f726a');
   const grid = css('--grid', '#dce6e0');
   const surface = css('--surface', '#ffffff');
@@ -329,7 +327,6 @@ export function drawTrend(canvas, run, hoverIndex, onHover) {
 export function drawPareto(canvas, points, frontier, selectedIndex, onHover) {
   canvas.dataset.ratio = '0.365';
   const { ctx, width, height } = setupCanvas(canvas);
-  const ink = css('--ink', '#10231d');
   const ink3 = css('--ink-3', '#5f726a');
   const grid = css('--grid', '#dce6e0');
   const surface = css('--surface', '#ffffff');
