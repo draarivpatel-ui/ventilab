@@ -1,0 +1,13 @@
+VentiLab turns a classroom into a clean-air physics laboratory. Everything runs offline in the browser, with no data leaving the device.
+
+We begin with a synthetic reference classroom: twenty-eight students, closed windows, modest mechanical outdoor air. A fourth-order Runge-Kutta solver integrates the carbon-dioxide mass balance. Students add carbon dioxide; outdoor air removes it. Filtration cleans particles but does not remove exhaled carbon dioxide, so the peak climbs past two thousand nine hundred parts per million. Clean air is not the same as fresh air.
+
+Switching to cross ventilation opens two opposing window paths. Wind and the indoor-outdoor temperature difference combine by root-sum-square, and the plume diagram updates at once. The carbon-dioxide curve falls sharply because outdoor air is finally doing real work.
+
+On a wildfire day the trade-off reverses. Outdoor fine particles reach one hundred eighty micrograms per cubic meter. Opening windows lowers carbon dioxide but raises indoor particles. A second equation balances infiltration, outdoor air and filter removal. A Corsi-Rosenthal fan box and a portable HEPA unit add clean-air delivery, shown as a separate equivalent airflow.
+
+The Wells-Riley model estimates relative airborne risk from time-integrated respiratory quanta. Masks reduce emission; ventilation, filtration and upper-room UVGI speed removal. The risk line responds to every change.
+
+The retrofit frontier is an exact Pareto calculation over one hundred twenty configurations. Each point trades cost against remaining risk, power, noise, carbon dioxide and particles. No point on the frontier is dominated: improving one objective worsens another. Clicking a point applies it everywhere.
+
+The verification panel compares the solver with closed-form solutions. Carbon-dioxide root-mean-square error stays orders of magnitude below the point-zero-five-percent target across every scenario. The printable action card carries results back to class. VentiLab makes the invisible visible, and gives students an honest way to argue with numbers.

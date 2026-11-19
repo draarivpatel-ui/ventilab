@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>VentiLab - Classroom Clean-Air and Airborne Risk Workbench</title>
+  <meta name="description" content="An offline classroom air-quality physics workbench: CO2 mass balance, Wells-Riley risk, PM2.5 filtration and retrofit optimization.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <header class="topbar">
+    <div class="brand" aria-label="VentiLab home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40" width="34" height="34" role="presentation">
+          <rect x="1" y="1" width="38" height="38" rx="11" fill="#e8f2ed" stroke="#9db9aa"/>
+          <path d="M8 15h17a4 4 0 1 0-4-4" fill="none" stroke="#14624a" stroke-width="2.4" stroke-linecap="round"/>
+          <path d="M8 21h23a4 4 0 1 1-4 4" fill="none" stroke="#14624a" stroke-width="2.4" stroke-linecap="round"/>
+          <path d="M8 27h12a3.5 3.5 0 1 1-3.5 3.5" fill="none" stroke="#14624a" stroke-width="2.4" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="brand-text">
+        <strong>VentiLab</strong>
+        <small>Clean-air physics workbench</small>
+      </span>
+    </div>
+    <div class="topbar-meta">
+      <span class="pill"><span class="dot" aria-hidden="true"></span>100% offline</span>
+      <span class="pill pill-quiet">Reference classroom models</span>
+      <button type="button" class="btn btn-ghost" id="shareBtn" aria-label="Copy shareable scenario link">Share scenario</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="heroTitle">
+      <div>
+        <p class="eyebrow">Classroom air, made visible</p>
+        <h1 id="heroTitle">Breathe easier. <span>Decide with physics.</span></h1>
+        <p class="lede">Adjust a classroom, watch six hours of CO2, fine particles and airborne risk respond, then find the cleanest affordable retrofit. Every number comes from a transparent differential equation running in your browser.</p>
+      </div>
+      <div class="hero-badge" aria-label="Workbench capabilities">
+        <div><strong>4</strong><span>coupled equations</span></div>
+        <div><strong>120</strong><span>retrofit options</span></div>
+        <div><strong>&lt;0.05%</strong><span>analytic error</span></div>
+      </div>
+    </section>
+
+    <div class="notice" role="note">
+      <strong>Educational model.</strong> These are synthetic reference classroom scenarios, not measurements or pilots from any real school. Estimates are for learning and exploration, not ventilation system design or health advice.
+    </div>
+
+    <section class="workspace" aria-label="Workbench controls and results">
+      <aside class="panel controls-panel" aria-labelledby="controlsTitle">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Step 1</p>
+            <h2 id="controlsTitle">Set the scene</h2>
+          </div>
+          <button type="button" class="link-btn" id="resetBtn">Reset</button>
+        </div>
+
+        <label class="field" for="presetSelect">
+          <span class="field-label">Reference scenario</span>
+          <select id="presetSelect" class="select">
+            <option value="standard28">Standard 28-student classroom (closed windows)</option>
+            <option value="crowded-lab">Crowded science lab</option>
+            <option value="rural-natural">Rural natural-ventilation room</option>
+            <option value="wildfire-smoke">Wildfire smoke day (180 ug/m3 outdoors)</option>
+            <option value="diy-retrofit">DIY Corsi-Rosenthal comparison</option>
+          </select>
+        </label>
+        <p class="field-note" id="presetNote" aria-live="polite"></p>
+
+        <div class="control-grid">
+          <label class="field" for="students">
+            <span class="field-label">Students <output id="studentsOut">28</output></span>
+            <input type="range" id="students" min="0" max="60" step="1" value="28">
+          </label>
+          <label class="field" for="volume">
+            <span class="field-label">Room volume <output id="volumeOut">210 m3</output></span>
+            <input type="range" id="volume" min="80" max="600" step="10" value="210">
+          </label>
+          <label class="field" for="outdoorPM">
+            <span class="field-label">Outdoor PM2.5 <output id="outdoorPMOut">12 ug/m3</output></span>
+            <input type="range" id="outdoorPM" min="0" max="300" step="5" value="12">
+          </label>
+          <label class="field" for="windowOpen">
+            <span class="field-label">Window opening <output id="windowOpenOut">0%</output></span>
+            <input type="range" id="windowOpen" min="0" max="100" step="5" value="0">
+          </label>
+          <label class="field" for="mechOA">
+            <span class="field-label">Mechanical outdoor air <output id="mechOAOut">180 m3/h</output></span>
+            <input type="range" id="mechOA" min="0" max="1200" step="20" value="180">
+          </label>
+          <label class="field" for="crBoxes">
+            <span class="field-label">Corsi-Rosenthal boxes <output id="crBoxesOut">0</output></span>
+            <input type="range" id="crBoxes" min="0" max="4" step="1" value="0">
+          </label>
+          <label class="field" for="hepaUnits">
+            <span class="field-label">HEPA units <output id="hepaUnitsOut">0</output></span>
+            <input type="range" id="hepaUnits" min="0" max="4" step="1" value="0">
+          </label>
+          <label class="field" for="budget">
+            <span class="field-label">Retrofit budget <output id="budgetOut">$1,200</output></span>
+            <input type="range" id="budget" min="0" max="5000" step="100" value="1200">
+          </label>
+        </div>
+
+        <fieldset class="field fieldset">
+          <legend class="field-label">Ventilation mode</legend>
+          <div class="segmented" role="radiogroup" aria-label="Ventilation mode">
+            <label><input type="radio" name="windowMode" value="closed" checked><span>Closed</span></label>
+            <label><input type="radio" name="windowMode" value="single"><span>Single-sided</span></label>
+            <label><input type="radio" name="windowMode" value="cross"><span>Cross</span></label>
+          </div>
+        </fieldset>
+
+        <div class="switch-row">
+          <label class="switch" for="merv13"><input type="checkbox" id="merv13"><span class="track" aria-hidden="true"></span><span>MERV-13 HVAC upgrade</span></label>
+          <label class="switch" for="uvgi"><input type="checkbox" id="uvgi"><span class="track" aria-hidden="true"></span><span>UVGI upper-room system</span></label>
+          <label class="switch" for="masks"><input type="checkbox" id="masks"><span class="track" aria-hidden="true"></span><span>70% effective masks</span></label>
+        </div>
+
+        <details class="advanced">
+          <summary>Advanced inputs</summary>
+          <div class="control-grid">
+            <label class="field" for="infectious"><span class="field-label">Infectious people <output id="infectiousOut">1</output></span><input type="range" id="infectious" min="0" max="4" step="1" value="1"></label>
+            <label class="field" for="wind"><span class="field-label">Wind speed <output id="windOut">1.5 m/s</output></span><input type="range" id="wind" min="0" max="8" step="0.5" value="1.5"></label>
+            <label class="field" for="outdoorCO2"><span class="field-label">Outdoor CO2 <output id="outdoorCO2Out">420 ppm</output></span><input type="range" id="outdoorCO2" min="300" max="900" step="10" value="420"></label>
+          </div>
+        </details>
+      </aside>
+
+      <div class="results-column">
+        <section class="panel metrics-panel" aria-labelledby="metricsTitle">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Step 2</p>
+              <h2 id="metricsTitle">Live classroom readout</h2>
+            </div>
+            <span class="status-chip" id="statusChip" role="status">Calculating</span>
+          </div>
+          <div class="metric-grid" id="metricGrid" aria-live="polite"></div>
+          <p class="metric-caption" id="metricCaption"></p>
+        </section>
+
+        <section class="panel viz-panel" aria-labelledby="classDiagramTitle">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Airflow and plume model</p>
+              <h2 id="classDiagramTitle">Inside the room</h2>
+            </div>
+            <span class="legend-inline"><i class="swatch swatch-co2" aria-hidden="true"></i>CO2 <i class="swatch swatch-particle" aria-hidden="true"></i>Particles</span>
+          </div>
+          <div class="diagram-wrap">
+            <canvas id="classCanvas" width="1040" height="400" role="img" aria-label="Classroom airflow diagram showing students, windows, ventilation paths and contaminant plume"></canvas>
+          </div>
+          <p class="viz-caption" id="diagramCaption"></p>
+        </section>
+
+        <section class="panel viz-panel" aria-labelledby="trendTitle">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Six-hour simulation</p>
+              <h2 id="trendTitle">CO2, particles and airborne risk</h2>
+            </div>
+            <div class="chart-actions">
+              <span class="legend-inline"><i class="swatch swatch-co2" aria-hidden="true"></i>CO2 (ppm) <i class="swatch swatch-particle" aria-hidden="true"></i>PM2.5 (ug/m3) <i class="swatch swatch-risk" aria-hidden="true"></i>Risk (%)</span>
+              <button type="button" class="link-btn" id="tableToggle" aria-expanded="false" aria-controls="dataTable">Table view</button>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="trendCanvas" width="1040" height="420" role="img" aria-label="Line chart of simulated CO2, PM2.5 and Wells-Riley risk over six hours with threshold lines"></canvas>
+            <div class="chart-tooltip" id="chartTooltip" role="tooltip" hidden></div>
+          </div>
+          <p class="viz-caption">Threshold guides: ASHRAE 241 clean-air target and WHO 24-hour PM2.5 guidance. Each series has its own labeled scale; read values from the hover tooltip or table view.</p>
+          <div id="dataTable" class="table-wrap" hidden></div>
+        </section>
+
+        <section class="panel viz-panel" aria-labelledby="paretoTitle">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Budget-constrained optimization</p>
+              <h2 id="paretoTitle">Retrofit frontier</h2>
+            </div>
+            <span class="legend-inline"><i class="swatch swatch-front" aria-hidden="true"></i>Pareto optimal <i class="swatch swatch-other" aria-hidden="true"></i>Dominated</span>
+          </div>
+          <div class="chart-wrap pareto-wrap">
+            <canvas id="paretoCanvas" width="1040" height="380" role="img" aria-label="Scatter plot of retrofit options by cost and remaining airborne risk"></canvas>
+            <div class="chart-tooltip" id="paretoTooltip" role="tooltip" hidden></div>
+          </div>
+          <p class="viz-caption" id="paretoCaption"></p>
+          <div class="intervention-list" id="interventionList" aria-label="Frontier intervention cards"></div>
+        </section>
+
+        <section class="panel verify-panel" aria-labelledby="verifyTitle">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Numerical integrity</p>
+              <h2 id="verifyTitle">Theory verification</h2>
+            </div>
+            <span class="status-chip chip-good" id="verifyChip" role="status">Checking</span>
+          </div>
+          <p class="verify-intro">The RK4 solver is checked against closed-form solutions for the CO2 mass balance, the PM2.5 filtration balance and the integrated quanta concentration.</p>
+          <div class="verify-grid" id="verifyGrid"></div>
+          <p class="formula-line">dC/dt = (n G)/V - (Q/V)(C - C&#8320;&#8320;) &nbsp;|&nbsp; P = 1 - exp(-I q p &#8747;c(t)dt)</p>
+        </section>
+
+        <section class="panel card-panel" aria-labelledby="cardTitle">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Take it to class</p>
+              <h2 id="cardTitle">Printable action card</h2>
+            </div>
+            <button type="button" class="btn btn-primary" id="printBtn">Print card</button>
+          </div>
+          <div id="actionCard" class="action-card"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>VentiLab is a zero-dependency, offline teaching tool. Physics is simplified and intentionally transparent. No data leaves your device.</p>
+    <p>Built for the UNICEF Clean Air and Climate Action track, ages 13-18.</p>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
