@@ -98,6 +98,10 @@ VentiLab for ventilation-system design or health decisions.
 | `tests/engine.test.mjs` | 29 deterministic unit tests |
 | `video/narration.txt`, `video/steps.json` | Demo script and choreography |
 
+## AI-use disclosure
+
+An AI coding assistant helped implement the physics solver, optimizer, browser UI, tests, and documentation. The author set all requirements, reviewed every change, and re-ran every test and verification check locally. No AI service is used at runtime.
+
 ## License
 
 MIT. See `LICENSE`.
