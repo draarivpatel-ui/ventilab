@@ -54,6 +54,18 @@ function dashedLine(ctx, x1, y1, x2, y2, color, pattern = [5, 5]) {
   ctx.restore();
 }
 
+function hexToRgb(hex) {
+  const v = parseInt(hex.replace('#', ''), 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+
+function mixColor(a, b, t) {
+  const ca = hexToRgb(a);
+  const cb = hexToRgb(b);
+  const m = ca.map((x, i) => Math.round(x + (cb[i] - x) * t));
+  return `${m[0]},${m[1]},${m[2]}`;
+}
+
 /** Classroom airflow diagram with window paths, desk grid, plume and devices. */
 export function drawClassroom(canvas, state) {
   canvas.dataset.ratio = '0.385';
@@ -159,18 +171,37 @@ export function drawClassroom(canvas, state) {
     ctx.fill();
     ctx.strokeStyle = accent;
     ctx.stroke();
+    if (i === 0 && state.infectious > 0) {
+      ctx.strokeStyle = particle;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(dx, dy - 11, 9, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (state.masks) {
+      ctx.strokeStyle = ink2;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(dx - 4, dy - 10);
+      ctx.lineTo(dx + 4, dy - 10);
+      ctx.stroke();
+    }
   }
+  if (state.infectious > 0) label(ctx, `${state.infectious} source${state.infectious === 1 ? '' : 's'}`, deskArea.x - 46, deskArea.y - 4, particle, 'left', 10, '650');
   if (state.students > shown) label(ctx, `+${state.students - shown} more`, room.x + room.w - 16, deskArea.y + deskArea.h - 10, ink3, 'right', 10);
 
-  // Exhalation plume grows with CO2 above outdoor background.
+  // Plume grows with CO2 and shifts toward the particle hue as PM2.5 dominates.
   const co2Rise = Math.max(0, state.co2Peak - state.outdoorCO2);
   const plumeIntensity = Math.min(1, co2Rise / 1800);
-  if (plumeIntensity > 0.02) {
+  const pmLoad = Math.min(1, Math.max(0, ((state.pmMean || 0) - 15) / 120));
+  const plumeRgb = mixColor('#2a78d6', '#eb6834', pmLoad);
+  if (plumeIntensity > 0.02 || pmLoad > 0.25) {
+    const strength = Math.max(plumeIntensity, pmLoad * 0.9);
     const px = room.x + room.w * 0.5;
     const py = deskArea.y - 8;
     const plume = ctx.createRadialGradient(px, py, 4, px, py, room.w * 0.27);
-    plume.addColorStop(0, `rgba(42,120,214,${0.2 + 0.28 * plumeIntensity})`);
-    plume.addColorStop(1, 'rgba(42,120,214,0)');
+    plume.addColorStop(0, `rgba(${plumeRgb},${0.2 + 0.28 * strength})`);
+    plume.addColorStop(1, `rgba(${plumeRgb},0)`);
     ctx.fillStyle = plume;
     ctx.beginPath();
     ctx.ellipse(px, py - 12, room.w * 0.27, room.h * 0.3, 0, 0, Math.PI * 2);
@@ -204,15 +235,16 @@ export function drawClassroom(canvas, state) {
 
   // Legend-like annotations under the room.
   const footerY = room.y + room.h + 22;
-  label(ctx, `Ventilation: ${state.qNatural.toFixed(0)} m3/h natural + ${state.mechOA.toFixed(0)} m3/h mechanical`, room.x + 2, footerY, ink2, 'left', 11);
-  label(ctx, `Equivalent clean airflow: ${state.ecaTotal.toFixed(0)} m3/h`, room.x + room.w, footerY, accent, 'right', 11, '700');
+  label(ctx, `Ventilation: ${state.qNatural.toFixed(0)} m3/h natural + ${state.mechOA.toFixed(0)} m3/h mechanical + ${(state.qInfiltration || 0).toFixed(0)} m3/h infiltration`, room.x + 2, footerY, ink2, 'left', 11);
+  label(ctx, `Equivalent clean airflow: ${state.ecaTotal.toFixed(0)} m3/h (${(state.ecaACH || 0).toFixed(1)} eACH, CDC guide >=5)`, room.x + room.w, footerY, accent, 'right', 11, '700');
 }
 
 /**
  * Three-series six-hour chart. Different units are shown as three labeled
- * traces with a shared time axis; threshold guides are drawn as dashed lines.
+ * traces with a shared time axis; reference guides are dashed lines and the
+ * closed-window, no-retrofit baseline is drawn as a ghost trace for contrast.
  */
-export function drawTrend(canvas, run, hoverIndex, onHover) {
+export function drawTrend(canvas, run, hoverIndex, baseline, schedule) {
   canvas.dataset.ratio = '0.404';
   const { ctx, width, height } = setupCanvas(canvas);
   const ink = css('--ink', '#10231d');
@@ -227,8 +259,8 @@ export function drawTrend(canvas, run, hoverIndex, onHover) {
   const pw = Math.max(10, width - m.l - m.r);
   const ph = Math.max(10, height - m.t - m.b);
   const maxTime = run.times[run.times.length - 1] || 360;
-  const maxCO2 = Math.max(1200, Math.ceil(Math.max(...run.co2) / 400) * 400);
-  const maxPM = Math.max(50, Math.ceil(Math.max(...run.pm) / 50) * 50);
+  const maxCO2 = Math.max(1600, Math.ceil(Math.max(...run.co2, ...(baseline ? baseline.co2 : [0])) / 400) * 400);
+  const maxPM = Math.max(50, Math.ceil(Math.max(...run.pm, ...(baseline ? baseline.pm : [0])) / 50) * 50);
   const x = (t) => m.l + (t / maxTime) * pw;
   const yCO2 = (v) => m.t + ph - (v / maxCO2) * ph;
   const yPM = (v) => m.t + ph - (v / maxPM) * ph;
@@ -236,6 +268,18 @@ export function drawTrend(canvas, run, hoverIndex, onHover) {
 
   ctx.fillStyle = surface;
   ctx.fillRect(0, 0, width, height);
+
+  // Low-occupancy blocks shaded so peaks read against the class schedule.
+  if (Array.isArray(schedule)) {
+    ctx.fillStyle = 'rgba(214,225,219,0.38)';
+    for (const block of schedule) {
+      if (block.occupancy >= 0.5) continue;
+      const bx = x(Math.max(0, block.start));
+      const bw = x(Math.min(maxTime, block.end)) - bx;
+      if (bw > 1) ctx.fillRect(bx, m.t, bw, ph);
+    }
+  }
+
   for (let i = 0; i <= 4; i += 1) {
     const y = m.t + (ph * i) / 4;
     ctx.strokeStyle = grid;
@@ -256,11 +300,50 @@ export function drawTrend(canvas, run, hoverIndex, onHover) {
     label(ctx, `${Math.round(t / 60)}h`, x(t), height - 14, ink3, 'center', 10);
   }
 
-  // Threshold guides on the CO2 scale.
-  dashedLine(ctx, m.l, yCO2(800), m.l + pw, yCO2(800), 'rgba(236,131,90,0.85)', [6, 4]);
-  label(ctx, 'ASHRAE 241 target 800', m.l + pw - 4, yCO2(800) - 9, css('--serious', '#ec835a'), 'right', 10, '650');
-  dashedLine(ctx, m.l, yPM(15), m.l + pw, yPM(15), 'rgba(250,178,25,0.9)', [3, 4]);
-  label(ctx, 'WHO PM2.5 15', m.l + 4, yPM(15) - 9, '#8a6500', 'left', 10, '650');
+  // Reference guides: CO2 monitoring levels on the left axis, PM2.5 on the right.
+  const co2Guides = [
+    { v: 800, text: 'guide 800', color: css('--good', '#0ca30c') },
+    { v: 1000, text: 'check 1000', color: css('--warning', '#fab219') },
+    { v: 1500, text: 'poor 1500', color: css('--critical', '#d03b3b') },
+  ];
+  co2Guides.forEach((g) => {
+    if (g.v > maxCO2) return;
+    dashedLine(ctx, m.l, yCO2(g.v), m.l + pw, yCO2(g.v), g.color, [6, 4]);
+    label(ctx, `CO2 ${g.text}`, m.l + pw - 4, yCO2(g.v) - 8, g.color, 'right', 10, '650');
+  });
+  const pmGuides = [
+    { v: 15, text: 'WHO 24h PM2.5 15', color: '#8a6500', dash: [3, 4] },
+    { v: 35, text: 'EPA 24h PM2.5 35', color: css('--serious', '#ec835a'), dash: [8, 3] },
+  ];
+  pmGuides.forEach((g, gi) => {
+    if (g.v > maxPM) return;
+    dashedLine(ctx, m.l, yPM(g.v), m.l + pw, yPM(g.v), g.color, g.dash);
+    label(ctx, g.text, m.l + 4, yPM(g.v) - 8 - gi * 12, g.color, 'left', 10, '650');
+  });
+
+  // Ghost trace: the same classroom with closed windows and no retrofit.
+  if (baseline) {
+    for (const s of [
+      { data: baseline.co2, y: yCO2, color: co2 },
+      { data: baseline.risk, y: yRisk, color: risk },
+    ]) {
+      ctx.strokeStyle = s.color;
+      ctx.globalAlpha = 0.38;
+      ctx.setLineDash([7, 5]);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      s.data.forEach((v, i) => {
+        const px = x(baseline.times[i]);
+        const py = s.y(v);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+    label(ctx, 'dashed: closed-window baseline', m.l + pw - 4, m.t + 10, ink3, 'right', 10, '650');
+  }
 
   const series = [
     { data: run.co2, y: yCO2, color: co2 },
@@ -326,7 +409,7 @@ export function drawTrend(canvas, run, hoverIndex, onHover) {
 }
 
 /** Cost versus remaining-risk scatter with exact Pareto points highlighted. */
-export function drawPareto(canvas, points, frontier, selectedIndex, onHover) {
+export function drawPareto(canvas, points, frontier, selectedIndex, hoveredIndex) {
   canvas.dataset.ratio = '0.365';
   const { ctx, width, height } = setupCanvas(canvas);
   const ink = css('--ink', '#10231d');
@@ -364,7 +447,7 @@ export function drawPareto(canvas, points, frontier, selectedIndex, onHover) {
     label(ctx, `$${c}`, x(c), height - 14, ink3, 'center', 10);
   }
   label(ctx, 'Remaining transmission risk', m.l + 6, m.t + 10, ink3, 'left', 10);
-  label(ctx, 'Retrofit cost (USD)', m.l + pw, height - 14, ink3, 'right', 10);
+  label(ctx, 'Retrofit cost (USD)', m.l + pw - 4, m.t + 10, ink3, 'right', 10);
 
   const frontierSet = new Set(frontier.map((p) => p.label));
   const dominated = points.filter((p) => !frontierSet.has(p.label));
@@ -384,7 +467,9 @@ export function drawPareto(canvas, points, frontier, selectedIndex, onHover) {
   });
   ctx.stroke();
   frontier.forEach((p) => {
-    const isSelected = selectedIndex === points.indexOf(p);
+    const idx = points.indexOf(p);
+    const isSelected = selectedIndex === idx;
+    const isHovered = hoveredIndex === idx;
     ctx.fillStyle = isSelected ? accent : co2;
     ctx.strokeStyle = surface;
     ctx.lineWidth = 2;
@@ -392,7 +477,23 @@ export function drawPareto(canvas, points, frontier, selectedIndex, onHover) {
     ctx.arc(x(p.cost), y(p.riskRemaining), isSelected ? 7 : 5, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    if (isHovered && !isSelected) {
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(x(p.cost), y(p.riskRemaining), 9, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   });
+  // Non-frontier points can also be inspected; ring them when hovered.
+  if (hoveredIndex !== null && hoveredIndex >= 0 && hoveredIndex < points.length && !frontierSet.has(points[hoveredIndex].label)) {
+    const p = points[hoveredIndex];
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(x(p.cost), y(p.riskRemaining), 8, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   if (frontier.length) {
     const best = frontier.reduce((a, b) => (b.riskRemaining < a.riskRemaining ? b : a), frontier[0]);
     ctx.fillStyle = accent;

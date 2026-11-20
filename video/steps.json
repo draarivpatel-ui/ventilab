@@ -65,7 +65,8 @@
 
   {"do": "at", "s": 128.23},
   {"do": "click", "selector": "#interventionList .intervention", "ms": 900},
-  {"do": "move", "selector": "#statusChip", "ms": 1100},
+  {"do": "scrollTo", "selector": "#statusChip", "ms": 900, "offset": 120},
+  {"do": "move", "selector": "#statusChip", "ms": 900},
 
   {"do": "at", "s": 131.78},
   {"do": "scrollTo", "selector": "#verifyGrid", "ms": 1400, "offset": 110},

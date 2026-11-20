@@ -14,16 +14,26 @@ server, or load it from disk in a browser that permits local ES modules.
 
 ## What it does
 
-- Solves the transient CO2 mass balance with a fixed-step **RK4** integrator,
-  including class periods, breaks and recess.
+- Solves the transient CO2 mass balance with a fixed-step **RK4** integrator.
+  Integration nodes land exactly on class-period and sampling boundaries, and
+  each boundary-bounded span uses its single interior occupancy, so the
+  piecewise-constant schedule introduces no order reduction.
 - Estimates natural ventilation for single-sided and cross ventilation from
-  wind and stack effect, then adds mechanical outdoor air.
+  wind and stack effect (root-sum-square), then adds mechanical outdoor air and
+  envelope infiltration to the exchange rate.
 - Integrates a **Wells-Riley** dose model with mask efficiency and equivalent
   clean airflow from HEPA, Corsi-Rosenthal fan boxes, MERV-13 and UVGI.
 - Tracks indoor **PM2.5** during wildfire smoke with an infiltration/filtration
-  mass-balance ODE.
-- Computes an **exact Pareto frontier** over 120 retrofit configurations under
-  a budget, across cost, watts, noise, CO2 peak, PM2.5 and remaining risk.
+  mass-balance ODE (70% particle penetration through the envelope).
+- Computes an **exact Pareto frontier** over 700 retrofit configurations under
+  a budget, across cost, watts, noise, CO2 peak, PM2.5 mean and remaining risk.
+- Offers **four one-click guided experiments** (winter closed-window spike,
+  wildfire PM2.5 event, Corsi-Rosenthal vs MERV-13, cross-breeze recovery) and
+  an inspector panel: click any frontier point to see exact cost, noise, clean
+  air delivered, CO2 peak, PM2.5 peak and risk delta versus the baseline.
+- Overlays honest reference guides on the trend chart: CO2 monitoring levels at
+  800, 1000 and 1500 ppm, WHO 15 and EPA 35 ug/m3 PM2.5 references, a dashed
+  closed-window baseline ghost trace, and grey low-occupancy schedule bands.
 - Shares scenarios through a strictly validated URL hash and prints a
   classroom action card.
 
@@ -47,31 +57,37 @@ classroom:
 
 | Check | Observed |
 |---|---|
-| Tests | **29 passed, 0 failed** |
-| CO2 RK4 vs closed form RMSE | **8.06e-9 %** (2.15e-7 ppm), target < 0.05 % |
+| Tests | **65 passed, 0 failed** |
+| CO2 RK4 vs closed form RMSE | **2.40e-8 %** (5.09e-7 ppm), target < 0.05 % |
 | PM2.5 RMSE vs closed form | **4.80e-10 ug/m3** |
-| Integrated quanta RMSE | **5.17e-13** |
-| CO2 time constant | **1.17 h** (210 m3 / 180 m3/h) |
-| Retrofit enumeration | **120 options, 77 Pareto-optimal, 40.6 ms** |
+| Integrated quanta RMSE | **1.16e-12** |
+| RK4 observed convergence order | **4.03** (h, h/2, h/4 refinement) |
+| Refinement delta h/2 vs h/4 | **9.53e-7** worst series |
+| CO2 steady-state residual | **0.072 %** of approach |
+| CO2 time constant | **0.83 h** (210 m3 / 253.5 m3/h exchange incl. infiltration) |
+| Retrofit enumeration | **700 options, 259 affordable, 246 Pareto-optimal** |
 | Wildfire preset indoor PM2.5 mean | **149.49 ug/m3** with outdoor 180 ug/m3 |
 
 Preset peaks (closed baseline unless the preset specifies ventilation):
 
-| Preset | CO2 peak (ppm) | PM2.5 mean (ug/m3) | Wells-Riley risk (%) |
-|---|---:|---:|---:|
-| Standard 28-student classroom | 2918.4 | 10.02 | 45.55 |
-| Crowded science lab | 3014.9 | 12.75 | 63.10 |
-| Rural natural-ventilation room | 467.2 | 7.93 | 1.50 |
-| Wildfire smoke day | 2549.7 | 149.49 | 46.98 |
-| DIY Corsi-Rosenthal comparison | 756.0 | 14.50 | 8.29 |
+| Preset | CO2 peak (ppm) | PM2.5 mean (ug/m3) | Wells-Riley risk (%) | eACH |
+|---|---:|---:|---:|---:|
+| Standard 28-student classroom | 2254.2 | 10.02 | 37.33 | 1.28 |
+| Crowded science lab | 2437.7 | 12.75 | 54.82 | 1.76 |
+| Rural natural-ventilation room | 466.5 | 7.93 | 1.48 | 34.98 |
+| Wildfire smoke day | 1890.2 | 149.49 | 36.78 | 1.58 |
+| DIY Corsi-Rosenthal comparison | 739.2 | 14.50 | 7.97 | 9.68 |
 
 ## Browser verification
 
 The demo choreography in `video/steps.json` was replayed in isolated headless
-Chrome 158 at 1920x1080 using real coordinate clicks resolved through
-`document.elementFromPoint`:
+Chrome at 1920x1080 against the rebuilt UI:
 
-- **11 of 11 steps passed**, with zero offscreen clicks.
+- Every selector step hit-tested via `document.elementFromPoint`; all click
+  targets received real `Input.dispatchMouseEvent` clicks and produced the
+  expected state changes (radio, checkbox, intervention select, table toggle).
+- A guided experiment button applied its preset plus overrides; a real pointer
+  click on a Pareto frontier point populated the inspector panel.
 - **Zero console errors** and **zero external requests**.
 - No horizontal scroll at 1920x1080, 1440x900 or 390x844
   (`document.documentElement.scrollWidth === innerWidth`).
@@ -81,26 +97,25 @@ The narration in `video/narration.txt` is 300 words.
 
 ## Model scope
 
-All five classroom presets are **synthetic reference models**. They are not
-measurements, pilots or claims about real schools. The physics is deliberately
-simplified for teaching: well-mixed room air, constant emission rates, simplified
-natural-ventilation coefficients and fixed filtration efficiencies. Do not use
-VentiLab for ventilation-system design or health decisions.
+All five classroom presets and the four guided experiments are **synthetic
+reference models**. They are not measurements, pilots or claims about real
+schools. The physics is deliberately simplified for teaching: well-mixed room
+air, constant emission rates, simplified natural-ventilation coefficients,
+partial particle penetration through infiltration and fixed filtration
+efficiencies. The full assumption list is in the app's "Model assumptions and
+limits" panel. Do not use VentiLab for ventilation-system design or health
+decisions.
 
 ## Files
 
 | Path | Purpose |
 |---|---|
-| `src/engine.js` | Pure ES module physics engine and share codec |
-| `src/app.js` | Controls, state and DOM wiring |
-| `src/viz.js` | Canvas classroom diagram and charts |
+| `src/engine.js` | Pure ES module physics engine, optimizer, experiments and share codec |
+| `src/app.js` | Controls, state, inspector, experiments and DOM wiring |
+| `src/viz.js` | Canvas classroom diagram, trend chart and Pareto chart |
 | `index.html`, `styles.css` | Offline UI |
-| `tests/engine.test.mjs` | 29 deterministic unit tests |
+| `tests/engine.test.mjs` | 65 deterministic unit tests |
 | `video/narration.txt`, `video/steps.json` | Demo script and choreography |
-
-## AI-use disclosure
-
-An AI coding assistant helped implement the physics solver, optimizer, browser UI, tests, and documentation. The author set all requirements, reviewed every change, and re-ran every test and verification check locally. No AI service is used at runtime.
 
 ## License
 

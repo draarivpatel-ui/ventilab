@@ -165,14 +165,14 @@ export function equipment(params) {
   };
 }
 
-/** Logarithmic addition of independent fan noise sources. */
+/** Logarithmic addition of independent fan noise sources. MERV-13 is passive. */
 export function equivalentNoise(params) {
   const p = normalizeParams(params);
   let sum = 0;
   for (let i = 0; i < p.crBoxes; i += 1) sum += 10 ** (52 / 10);
   for (let i = 0; i < p.hepaUnits; i += 1) sum += 10 ** (49 / 10);
-  if (sum <= 0) return p.merv13 ? 1 : 0;
-  const level = 10 * Math.log10(sum) + (p.merv13 ? 1 : 0);
+  if (sum <= 0) return 0;
+  const level = 10 * Math.log10(sum);
   return Number.isFinite(level) ? level : 0;
 }
 
@@ -188,12 +188,12 @@ function derivatives(state, tHours, p, vent, equip, occupancyOverride) {
   const people = (occupancyOverride === undefined
     ? occupancyAt(tMinutes, p) * p.students
     : occupancyOverride * p.students);
-  const qOutdoor = vent.qNatural + p.mechOA;
+  const qExchange = vent.qNatural + p.mechOA + vent.qInfiltration;
   const co2Source = (people * p.co2Generation * 1000) / p.volume;
-  const dco2 = co2Source - (qOutdoor / p.volume) * (co2 - p.outdoorCO2);
+  const dco2 = co2Source - (qExchange / p.volume) * (co2 - p.outdoorCO2);
 
   const quantaRemoval =
-    qOutdoor +
+    qExchange +
     p.mechOA * equip.oaFilterEfficiency +
     equip.quantaCADR;
   const dquanta = 1 / p.volume - (quantaRemoval / p.volume) * quanta;
@@ -241,8 +241,10 @@ export function simulate(input = {}, options = {}) {
   const sampleTimes = [];
   for (let t = 0; t <= duration + EPS; t += p.sampleMin) sampleTimes.push(Math.min(t, duration));
   const nodes = sortedUnique([0, duration, ...boundaries, ...sampleTimes]);
-  // Integrate in hours; the reported time series stays in minutes.
-  const deriv = (state, tHours) => derivatives(state, tHours, p, vent, equip, options.occupancyOverride);
+  // Integrate in hours; the reported time series stays in minutes. Occupancy is
+  // piecewise constant, so each span uses its single interior value exactly;
+  // node times never rely on a floating-point round-trip through hours.
+  const deriv = (state, tHours, occupancy) => derivatives(state, tHours, p, vent, equip, occupancy);
 
   let state = [p.co2Start, 0, 0, p.pmStart];
   const times = [];
@@ -262,11 +264,11 @@ export function simulate(input = {}, options = {}) {
   };
   push(0, state);
 
-  const qOutdoor = vent.qNatural + p.mechOA;
+  const qExchange = vent.qNatural + p.mechOA + vent.qInfiltration;
   const maxRate = Math.max(
-    qOutdoor / p.volume,
-    (qOutdoor + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR) / p.volume,
-    (vent.qInfiltration + qOutdoor + equip.pmCADR) / p.volume
+    qExchange / p.volume,
+    (qExchange + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR) / p.volume,
+    (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume
   );
 
   for (let n = 0; n < nodes.length - 1; n += 1) {
@@ -276,16 +278,20 @@ export function simulate(input = {}, options = {}) {
     if (span <= EPS) continue;
     const minStableSteps = maxRate > EPS ? Math.ceil((maxRate * (span / 60)) / 1.5) : 1;
     const steps = Math.max(1, Math.ceil(span / p.stepMin - 1e-9), minStableSteps);
+    const spanOccupancy = options.occupancyOverride === undefined
+      ? occupancyAt((start + end) / 2, p)
+      : options.occupancyOverride;
     const h = span / steps / 60;
     for (let j = 0; j < steps; j += 1) {
-      state = rk4Step(state, h, (start + j * (span / steps)) / 60, deriv);
+      state = rk4Step(state, h, (start + j * (span / steps)) / 60, (s, t) => deriv(s, t, spanOccupancy));
     }
     push(end, state);
   }
 
   const ecaTotal =
-    vent.qNatural + p.mechOA + equip.quantaCADR + p.mechOA * equip.oaFilterEfficiency;
+    qExchange + equip.quantaCADR + p.mechOA * equip.oaFilterEfficiency;
   const ecaPerPersonLps = p.students > 0 ? ecaTotal / p.students / 3.6 : 0;
+  const oaPerPersonLps = p.students > 0 ? qExchange / p.students / 3.6 : 0;
   const max = (arr) => arr.reduce((a, b) => Math.max(a, b), -Infinity);
   const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
 
@@ -306,13 +312,18 @@ export function simulate(input = {}, options = {}) {
       riskFinal: risk[risk.length - 1],
       dose: state[2],
       ecaTotal,
+      ecaACH: ecaTotal / p.volume,
       ecaPerPersonLps,
+      oaPerPersonLps,
       cost: equip.cost,
       watts: equip.watts,
       dBA: equip.dBA,
       naturalCFM: vent.qNatural / 1.699,
       qNatural: vent.qNatural,
       qMech: p.mechOA,
+      qInfiltration: vent.qInfiltration,
+      quantaCADR: equip.quantaCADR,
+      pmCADR: equip.pmCADR,
     },
   };
 }
@@ -329,7 +340,8 @@ export function wellsRileyProbability(integratedConcentration, params) {
 /** Closed-form CO2 solution for one constant-occupancy, constant-airflow segment. */
 export function co2Analytic(tHours, params, initialCO2) {
   const p = normalizeParams(params);
-  const q = ventilationRates(p).qNatural + p.mechOA;
+  const vent = ventilationRates(p);
+  const q = vent.qNatural + p.mechOA + vent.qInfiltration;
   const cOut = p.outdoorCO2;
   const c0 = finite(initialCO2, cOut);
   const source = (p.students * p.co2Generation * 1000) / p.volume; // ppm/h
@@ -358,7 +370,7 @@ export function quantaIntegralAnalytic(tHours, params) {
   const vent = ventilationRates(p);
   const equip = equipment(p);
   const removal =
-    vent.qNatural + p.mechOA + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR;
+    vent.qNatural + p.mechOA + vent.qInfiltration + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR;
   const k = removal / p.volume;
   if (k <= EPS) return tHours / p.volume;
   const cInf = 1 / removal;
@@ -383,7 +395,8 @@ export function verifyAnalytics(input = {}) {
   const run = simulate(p);
   const vent = ventilationRates(p);
   const equip = equipment(p);
-  const co2Rate = (vent.qNatural + p.mechOA) / p.volume;
+  const qExchange = vent.qNatural + p.mechOA + vent.qInfiltration;
+  const co2Rate = qExchange / p.volume;
   const co2Source = (p.students * p.co2Generation * 1000) / p.volume;
   const pmRate = (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume;
   const pmSource =
@@ -393,7 +406,7 @@ export function verifyAnalytics(input = {}) {
     p.outdoorPM /
     p.volume;
   const quantaRatePerHour =
-    (vent.qNatural + p.mechOA + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR) /
+    (qExchange + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR) /
     p.volume;
 
   const co2Errors = [];
@@ -410,11 +423,15 @@ export function verifyAnalytics(input = {}) {
   const rmse = (arr) => Math.sqrt(arr.reduce((s, e) => s + e * e, 0) / arr.length);
   const meanCo2 = run.co2.reduce((a, b) => a + b, 0) / run.co2.length;
   const co2Rmse = rmse(co2Errors);
-  const tauHours = p.volume / (vent.qNatural + p.mechOA);
+  const tauHours = p.volume / qExchange;
   const oneTau = co2Analytic(tauHours, p, p.co2Start);
   const sixHours = co2Analytic(6, p, p.co2Start);
   const approachFraction = Math.abs(sixHours - p.co2Start) > EPS
     ? (oneTau - p.co2Start) / (sixHours - p.co2Start)
+    : 0;
+  const co2Equilibrium = co2Rate > EPS ? p.outdoorCO2 + co2Source / co2Rate : Infinity;
+  const steadyResidual = Number.isFinite(co2Equilibrium)
+    ? Math.abs(run.co2[run.co2.length - 1] - co2Equilibrium) / Math.max(EPS, Math.abs(co2Equilibrium - p.co2Start))
     : 0;
   return {
     co2RmsePpm: co2Rmse,
@@ -425,16 +442,61 @@ export function verifyAnalytics(input = {}) {
     pmRatio: pmSteadyRatio(p),
     timeConstantHours: tauHours,
     approachFraction,
+    co2Equilibrium,
+    steadyResidual,
     steps: run.times.length - 1,
     passed: (co2Rmse / meanCo2) * 100 < 0.05 && rmse(quantaErrors) < 1e-5,
   };
 }
 
-/** Run a scenario and compare it with the closed-window, no-equipment baseline. */
-export function evaluateScenario(input = {}) {
+/**
+ * Richardson-style step-size check: the same scenario at h, h/2 and h/4.
+ * Output nodes are identical across runs because sampling never depends on
+ * stepMin, so the series can be compared point for point. For a smooth ODE an
+ * RK4 method shows an observed order near 4 (each refinement cuts the error
+ * roughly sixteen-fold).
+ */
+export function convergenceCheck(input = {}) {
   const p = normalizeParams(input);
-  const run = simulate(p);
-  const baseline = simulate({
+  const h0 = p.stepMin;
+  const runAt = (stepMin) => simulate({ ...p, stepMin, sampleMin: 30 });
+  const coarse = runAt(h0);
+  const mid = runAt(h0 / 2);
+  const fine = runAt(h0 / 4);
+  const series = [
+    { key: 'co2', label: 'CO2' },
+    { key: 'pm', label: 'PM2.5' },
+    { key: 'integral', label: 'Integrated quanta' },
+  ];
+  const rows = [];
+  for (const s of series) {
+    const a = coarse[s.key];
+    const b = mid[s.key];
+    const c = fine[s.key];
+    let deltaCM = 0;
+    let deltaMF = 0;
+    for (let i = 0; i < a.length && i < b.length && i < c.length; i += 1) {
+      deltaCM = Math.max(deltaCM, Math.abs(a[i] - b[i]));
+      deltaMF = Math.max(deltaMF, Math.abs(b[i] - c[i]));
+    }
+    const order = deltaMF > 0 && deltaCM > 0 ? Math.log2(deltaCM / deltaMF) : Infinity;
+    rows.push({ key: s.key, label: s.label, deltaCM, deltaMF, order });
+  }
+  const worstDelta = Math.max(...rows.map((r) => r.deltaMF));
+  const minOrder = Math.min(...rows.map((r) => r.order));
+  return {
+    stepMin: h0,
+    rows,
+    worstDelta,
+    minOrder,
+    passed: worstDelta < 1e-6 || minOrder >= 3,
+  };
+}
+
+/** Parameters for the closed-window, no-equipment reference baseline. */
+export function baselineParams(input = {}) {
+  const p = normalizeParams(input);
+  return {
     ...p,
     windowMode: 'closed',
     windowOpen: 0,
@@ -442,7 +504,14 @@ export function evaluateScenario(input = {}) {
     hepaUnits: 0,
     merv13: false,
     uvgi: false,
-  });
+  };
+}
+
+/** Run a scenario and compare it with the closed-window, no-equipment baseline. */
+export function evaluateScenario(input = {}, baselineRun) {
+  const p = normalizeParams(input);
+  const run = simulate(p);
+  const baseline = baselineRun || simulate(baselineParams(p));
   const baseRisk = baseline.metrics.riskFinal;
   const riskReduction = baseRisk > EPS ? ((baseRisk - run.metrics.riskFinal) / baseRisk) * 100 : 0;
   return {
@@ -491,9 +560,9 @@ export function interventionOptions(params = {}) {
   const p = normalizeParams(params);
   const options = [];
   for (const mode of ['closed', 'single', 'cross']) {
-    for (const open of mode === 'closed' ? [0] : [0.5, 1]) {
-      for (const cr of [0, 1, 2]) {
-        for (const hepa of [0, 1]) {
+    for (const open of mode === 'closed' ? [0] : [0.25, 0.5, 1]) {
+      for (const cr of [0, 1, 2, 3, 4]) {
+        for (const hepa of [0, 1, 2, 3, 4]) {
           for (const merv of [false, true]) {
             for (const uvgi of [false, true]) {
               options.push({
@@ -519,8 +588,10 @@ export function interventionOptions(params = {}) {
 export function optimizeRetrofits(input = {}, budgetLimit) {
   const p = normalizeParams(input);
   const limit = budgetLimit === undefined ? p.budget : budgetLimit;
+  const baseline = simulate(baselineParams(p));
   const scenarios = interventionOptions(p).map((option) => {
-    const evaluated = evaluateScenario(option);
+    const evaluated = evaluateScenario(option, baseline);
+    const equip = equipment(option);
     return {
       label: option.label,
       params: option,
@@ -528,9 +599,15 @@ export function optimizeRetrofits(input = {}, budgetLimit) {
       watts: evaluated.metrics.watts,
       dBA: evaluated.metrics.dBA,
       co2Peak: evaluated.metrics.co2Peak,
+      co2Mean: evaluated.metrics.co2Mean,
+      pmPeak: evaluated.metrics.pmPeak,
       pmMean: evaluated.metrics.pmMean,
       riskRemaining: evaluated.metrics.riskFinal,
       riskReduction: evaluated.metrics.riskReduction,
+      ecaTotal: evaluated.metrics.ecaTotal,
+      ecaACH: evaluated.metrics.ecaACH,
+      quantaCADR: equip.quantaCADR,
+      pmCADR: equip.pmCADR,
     };
   });
   const affordable = scenarios.filter((s) => s.cost <= limit + 1e-9);
@@ -600,6 +677,45 @@ export const PRESETS = Object.freeze([
 
 export function getPreset(id) {
   return PRESETS.find((preset) => preset.id === id) || PRESETS[0];
+}
+
+/**
+ * One-click guided experiments. Each pins a synthetic reference scenario plus a
+ * short reading cue; every parameter remains editable afterward.
+ */
+export const EXPERIMENTS = Object.freeze([
+  {
+    id: 'winter-spike',
+    name: 'Winter closed-window spike',
+    presetId: 'standard28',
+    overrides: { windowMode: 'closed', windowOpen: 0, mechOA: 120 },
+    watch: 'CO2 climbs through the 1000 and 1500 ppm guides all day while Wells-Riley risk accumulates. Then apply any frontier point and watch the dashed baseline separate.',
+  },
+  {
+    id: 'wildfire-event',
+    name: 'Wildfire smoke PM2.5 event',
+    presetId: 'wildfire-smoke',
+    overrides: {},
+    watch: 'Indoor PM2.5 settles far above the EPA 24-hour guide of 35 ug/m3. Apply a frontier point with HEPA or fan boxes and watch the orange line fall.',
+  },
+  {
+    id: 'cr-vs-merv',
+    name: 'Corsi-Rosenthal vs MERV-13',
+    presetId: 'diy-retrofit',
+    overrides: { budget: 900 },
+    watch: 'On the frontier, DIY fan boxes sit next to a MERV-13 upgrade at similar risk. Click each point to compare cost, noise and clean air delivered.',
+  },
+  {
+    id: 'cross-breeze',
+    name: 'Cross-breeze recovery',
+    presetId: 'rural-natural',
+    overrides: {},
+    watch: 'Cross ventilation with mild wind holds CO2 near outdoor levels and risk near zero, the free retrofit. Drag wind speed to zero to see it collapse.',
+  },
+]);
+
+export function getExperiment(id) {
+  return EXPERIMENTS.find((exp) => exp.id === id) || null;
 }
 
 const SHARE_FIELDS = Object.freeze({

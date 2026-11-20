@@ -24,7 +24,6 @@
       </span>
       <span class="brand-text">
         <strong>VentiLab</strong>
-        <small>Clean-air physics workbench</small>
       </span>
     </div>
     <div class="topbar-meta">
@@ -37,28 +36,29 @@
   <main id="main">
     <section class="hero" aria-labelledby="heroTitle">
       <div>
-        <p class="eyebrow">Classroom air, made visible</p>
         <h1 id="heroTitle">Breathe easier. <span>Decide with physics.</span></h1>
-        <p class="lede">Adjust a classroom, watch six hours of CO2, fine particles and airborne risk respond, then find the cleanest affordable retrofit. Every number comes from a transparent differential equation running in your browser.</p>
       </div>
       <div class="hero-badge" aria-label="Workbench capabilities">
         <div><strong>4</strong><span>coupled equations</span></div>
-        <div><strong>120</strong><span>retrofit options</span></div>
+        <div><strong>700</strong><span>retrofit options</span></div>
         <div><strong>&lt;0.05%</strong><span>analytic error</span></div>
       </div>
     </section>
 
     <div class="notice" role="note">
-      <strong>Educational model.</strong> These are synthetic reference classroom scenarios, not measurements or pilots from any real school. Estimates are for learning and exploration, not ventilation system design or health advice.
+      <strong>Educational model.</strong> These are synthetic reference classroom scenarios, not measurements or pilots from any real school. Adjust a classroom, watch six hours of CO2, fine particles and airborne risk respond, then find the cleanest affordable retrofit. Every number comes from transparent differential equations solved in your browser. Estimates are for learning and exploration, not ventilation system design or health advice.
     </div>
+
+    <section class="experiments" aria-labelledby="expTitle">
+      <h2 id="expTitle" class="exp-title">Guided experiments</h2>
+      <div class="exp-row" id="expRow"></div>
+      <p class="exp-note" id="expNote">Pick an experiment to load a reference classroom and a suggested reading. Every slider stays editable afterward.</p>
+    </section>
 
     <section class="workspace" aria-label="Workbench controls and results">
       <aside class="panel controls-panel" aria-labelledby="controlsTitle">
         <div class="panel-head">
-          <div>
-            <p class="eyebrow">Step 1</p>
-            <h2 id="controlsTitle">Set the scene</h2>
-          </div>
+          <h2 id="controlsTitle">Set the scene</h2>
           <button type="button" class="link-btn" id="resetBtn">Reset</button>
         </div>
 
@@ -137,10 +137,7 @@
       <div class="results-column">
         <section class="panel metrics-panel" aria-labelledby="metricsTitle">
           <div class="panel-head">
-            <div>
-              <p class="eyebrow">Step 2</p>
-              <h2 id="metricsTitle">Live classroom readout</h2>
-            </div>
+            <h2 id="metricsTitle">Live classroom readout</h2>
             <span class="status-chip" id="statusChip" role="status">Calculating</span>
           </div>
           <div class="metric-grid" id="metricGrid" aria-live="polite"></div>
@@ -149,10 +146,7 @@
 
         <section class="panel viz-panel" aria-labelledby="classDiagramTitle">
           <div class="panel-head">
-            <div>
-              <p class="eyebrow">Airflow and plume model</p>
-              <h2 id="classDiagramTitle">Inside the room</h2>
-            </div>
+            <h2 id="classDiagramTitle">Inside the room</h2>
             <span class="legend-inline"><i class="swatch swatch-co2" aria-hidden="true"></i>CO2 <i class="swatch swatch-particle" aria-hidden="true"></i>Particles</span>
           </div>
           <div class="diagram-wrap">
@@ -163,29 +157,23 @@
 
         <section class="panel viz-panel" aria-labelledby="trendTitle">
           <div class="panel-head">
-            <div>
-              <p class="eyebrow">Six-hour simulation</p>
-              <h2 id="trendTitle">CO2, particles and airborne risk</h2>
-            </div>
+            <h2 id="trendTitle">CO2, particles and airborne risk</h2>
             <div class="chart-actions">
-              <span class="legend-inline"><i class="swatch swatch-co2" aria-hidden="true"></i>CO2 (ppm) <i class="swatch swatch-particle" aria-hidden="true"></i>PM2.5 (ug/m3) <i class="swatch swatch-risk" aria-hidden="true"></i>Risk (%)</span>
+              <span class="legend-inline"><i class="swatch swatch-co2" aria-hidden="true"></i>CO2 (ppm) <i class="swatch swatch-particle" aria-hidden="true"></i>PM2.5 (ug/m3) <i class="swatch swatch-risk" aria-hidden="true"></i>Risk (%) <i class="swatch swatch-ghost" aria-hidden="true"></i>Baseline</span>
               <button type="button" class="link-btn" id="tableToggle" aria-expanded="false" aria-controls="dataTable">Table view</button>
             </div>
           </div>
           <div class="chart-wrap">
-            <canvas id="trendCanvas" width="1040" height="420" role="img" aria-label="Line chart of simulated CO2, PM2.5 and Wells-Riley risk over six hours with threshold lines"></canvas>
+            <canvas id="trendCanvas" width="1040" height="420" role="img" aria-label="Line chart of simulated CO2, PM2.5 and Wells-Riley risk over six hours with reference guide lines and a dashed baseline"></canvas>
             <div class="chart-tooltip" id="chartTooltip" role="tooltip" hidden></div>
           </div>
-          <p class="viz-caption">Threshold guides: ASHRAE 241 clean-air target and WHO 24-hour PM2.5 guidance. Each series has its own labeled scale; read values from the hover tooltip or table view.</p>
+          <p class="viz-caption">Dashed guides mark CO2 monitoring levels at 800, 1000 and 1500 ppm plus WHO 15 and EPA 35 ug/m3 PM2.5 references. Faint dashed traces show the same classroom with closed windows and no retrofit. Grey bands are low-occupancy periods.</p>
           <div id="dataTable" class="table-wrap" hidden></div>
         </section>
 
         <section class="panel viz-panel" aria-labelledby="paretoTitle">
           <div class="panel-head">
-            <div>
-              <p class="eyebrow">Budget-constrained optimization</p>
-              <h2 id="paretoTitle">Retrofit frontier</h2>
-            </div>
+            <h2 id="paretoTitle">Retrofit frontier</h2>
             <span class="legend-inline"><i class="swatch swatch-front" aria-hidden="true"></i>Pareto optimal <i class="swatch swatch-other" aria-hidden="true"></i>Dominated</span>
           </div>
           <div class="chart-wrap pareto-wrap">
@@ -193,28 +181,44 @@
             <div class="chart-tooltip" id="paretoTooltip" role="tooltip" hidden></div>
           </div>
           <p class="viz-caption" id="paretoCaption"></p>
+          <div class="pareto-inspector" id="paretoInspector" aria-live="polite">
+            <div class="insp-head">
+              <strong id="inspTitle">Frontier point</strong>
+              <button type="button" class="btn btn-primary" id="inspApply">Apply to classroom</button>
+            </div>
+            <div class="insp-grid" id="inspGrid"></div>
+            <p class="insp-note" id="inspNote"></p>
+          </div>
           <div class="intervention-list" id="interventionList" aria-label="Frontier intervention cards"></div>
         </section>
 
         <section class="panel verify-panel" aria-labelledby="verifyTitle">
           <div class="panel-head">
-            <div>
-              <p class="eyebrow">Numerical integrity</p>
-              <h2 id="verifyTitle">Theory verification</h2>
-            </div>
+            <h2 id="verifyTitle">Theory verification</h2>
             <span class="status-chip chip-good" id="verifyChip" role="status">Checking</span>
           </div>
-          <p class="verify-intro">The RK4 solver is checked against closed-form solutions for the CO2 mass balance, the PM2.5 filtration balance and the integrated quanta concentration.</p>
+          <p class="verify-intro">The RK4 solver is checked against closed-form solutions for the CO2 mass balance, the PM2.5 filtration balance and the integrated quanta concentration, then against itself at step sizes h, h/2 and h/4 to confirm fourth-order convergence.</p>
           <div class="verify-grid" id="verifyGrid"></div>
           <p class="formula-line">dC/dt = (n G)/V - (Q/V)(C - C&#8320;&#8320;) &nbsp;|&nbsp; P = 1 - exp(-I q p &#8747;c(t)dt)</p>
         </section>
 
+        <details class="panel assumptions" id="assumptionsPanel">
+          <summary>Model assumptions and limits</summary>
+          <ul class="assume-list">
+            <li>The room is well mixed. One concentration represents the whole space; real rooms form gradients near people, windows and filters.</li>
+            <li>CO2 and quanta exchange counts natural ventilation, mechanical outdoor air and infiltration (infiltration ACH times volume). PM2.5 uses the same exchange with a 70% particle penetration factor through cracks.</li>
+            <li>Natural ventilation is a teaching estimate. Wind uses discharge coefficients 0.25 single-sided and 0.62 cross-flow with two equal openings; stack uses a fixed neutral height; the two combine by root-sum-square. Real openings, screens and gusts differ.</li>
+            <li>Occupancy follows a fixed five-period schedule and emission rates are constant per person: 18 L/h of CO2 equivalent per student and a set quanta rate per infectious person.</li>
+            <li>Wells-Riley risk scales linearly from one integrated unit-source concentration, so masks, infectious count and quanta rate multiply the dose exactly. It is a relative risk teaching tool, not an infection forecast.</li>
+            <li>MERV-13 is modeled as 55% removal on the mechanical outdoor air stream plus a 4 ACH equivalent recirculation credit and a 40 W fan-energy penalty; it is passive and adds no noise. UVGI adds a 3 ACH equivalent removal. Fan boxes and HEPA units add fixed clean-air delivery rates.</li>
+            <li>Noise is the logarithmic sum of independent fan sources (52 dBA per fan box, 49 dBA per HEPA unit). Costs are rough single-number USD estimates for comparison only.</li>
+            <li>All scenarios are synthetic reference models. Nothing here is a measurement, a pilot, or a claim about a real building.</li>
+          </ul>
+        </details>
+
         <section class="panel card-panel" aria-labelledby="cardTitle">
           <div class="panel-head">
-            <div>
-              <p class="eyebrow">Take it to class</p>
-              <h2 id="cardTitle">Printable action card</h2>
-            </div>
+            <h2 id="cardTitle">Printable action card</h2>
             <button type="button" class="btn btn-primary" id="printBtn">Print card</button>
           </div>
           <div id="actionCard" class="action-card"></div>
