@@ -111,31 +111,25 @@ function metricCard(label, value, unit, percent, kind, note) {
 
 function renderMetrics() {
   const m = evaluated.metrics;
-  const isValid = Number.isFinite(m.co2Peak) && Number.isFinite(m.pmMean) && Number.isFinite(m.riskFinal);
-  const severity = !isValid ? 'Solver error'
-    : m.co2Peak >= 1500 ? 'High CO2'
-    : m.pmMean >= 35 ? 'High PM2.5'
-    : m.riskFinal >= 20 ? 'High infection risk'
-    : m.co2Peak >= 1000 ? 'Elevated CO2'
-    : m.pmMean >= 15 ? 'Elevated PM2.5'
-    : m.riskFinal >= 10 ? 'Elevated infection risk'
-    : 'Within guide bands';
-  const alert = !isValid || severity.startsWith('High');
+  const severity = E.severityStatus(m);
   const chip = $('statusChip');
-  chip.textContent = severity;
-  chip.className = `status-chip${alert ? ' chip-alert' : ' chip-good'}`;
+  chip.textContent = severity.label;
+  chip.className = `status-chip${severity.level === 'high' || severity.level === 'error' ? ' chip-alert' : severity.level === 'elevated' ? ' chip-warn' : ' chip-good'}`;
+  const delta = m.riskReduction;
+  const deltaText = `${delta > 0 ? '-' : delta < 0 ? '+' : ''}${fmt(Math.abs(delta), 1)}%`;
   $('metricGrid').innerHTML = [
     metricCard('CO2 peak', fmt(m.co2Peak), 'ppm', (m.co2Peak / 2500) * 100, '', 'six-hour maximum'),
     metricCard('PM2.5 indoor mean', fmt(m.pmMean, 1), 'ug/m3', (m.pmMean / 200) * 100, 'is-particles', 'six-hour mean'),
     metricCard('Wells-Riley risk', fmt(m.riskFinal, 1), '%', m.riskFinal, 'is-risk', 'end of day'),
-    metricCard('Risk reduction', fmt(m.riskReduction, 1), '% vs closed baseline', m.riskReduction, 'is-money', 'same class, no retrofit'),
+    metricCard('Risk vs do-nothing', deltaText, `baseline ${fmt(m.baselineRisk, 1)}% -> now ${fmt(m.riskFinal, 1)}%`, Math.max(0, delta), 'is-money', 'closed windows, no devices'),
     metricCard('Equivalent clean airflow', fmt(m.ecaTotal), 'm3/h (ASHRAE 241)', Math.min(100, (m.ecaACH / 8) * 100), '', `${fmt(m.ecaACH, 1)} eACH, CDC guide >=5`),
     metricCard('Outdoor air per person', fmt(m.oaPerPersonLps, 1), 'L/s', Math.min(100, (m.oaPerPersonLps / 10) * 100), '', `ASHRAE 62.1 classroom guide ~7 L/s`),
     metricCard('Retrofit cost', `$${fmt(m.cost)}`, 'one-time estimate', Math.min(100, (m.cost / 4000) * 100), 'is-money', 'for selected devices'),
     metricCard('Device power', fmt(m.watts), 'W', Math.min(100, (m.watts / 500) * 100), '', `${fmt(m.dBA, 0)} dBA combined`),
   ].join('');
   const band = m.co2Peak >= 1500 ? 'the 1500 ppm poor band' : m.co2Peak >= 1000 ? 'the 1000 ppm check band' : 'the 800 ppm guide band';
-  $('metricCaption').textContent = `Peak CO2 sits in ${band} on the chart. Outdoor air per student is ${fmt(m.oaPerPersonLps, 1)} L/s against the ASHRAE 62.1 classroom guide of about 7 L/s, and equivalent clean airflow is ${fmt(m.ecaACH, 1)} eACH against the CDC guide of 5 or more.`;
+  const pmGuide = m.pmMean >= 35 ? 'over the EPA 24-hour guide of 35' : m.pmMean >= 15 ? 'over the WHO 24-hour guide of 15' : 'inside the WHO 24-hour guide of 15';
+  $('metricCaption').textContent = `Peak CO2 sits in ${band} on the chart. Indoor PM2.5 averages ${fmt(m.pmMean, 1)} ug/m3, ${pmGuide}. Outdoor air per student is ${fmt(m.oaPerPersonLps, 1)} L/s against the ASHRAE 62.1 classroom guide of about 7 L/s, and equivalent clean airflow is ${fmt(m.ecaACH, 1)} eACH against the CDC guide of 5 or more.`;
   $('diagramCaption').textContent = state.windowMode === 'closed'
     ? `Windows closed. Mechanical outdoor air is ${fmt(state.mechOA)} m3/h and infiltration adds ${fmt(m.qInfiltration)} m3/h; filtration recirculates indoor air but does not remove the body-generated CO2.`
     : `${state.windowMode === 'cross' ? 'Cross' : 'Single-sided'} ventilation at ${Math.round(state.windowOpen * 100)}% opening contributes ${fmt(m.qNatural)} m3/h of outdoor air on top of ${fmt(m.qInfiltration)} m3/h infiltration.`;
@@ -148,7 +142,7 @@ function renderTable() {
 
 function describeOption(option) {
   const parts = [];
-  if (option.params.windowMode !== 'closed') parts.push(`${option.params.windowMode} windows ${Math.round(option.params.windowOpen * 100)}%`);
+  if (option.params.windowMode !== 'closed') parts.push(`${option.params.windowMode === 'cross' ? 'cross' : 'single-sided'} windows ${Math.round(option.params.windowOpen * 100)}%`);
   if (option.params.crBoxes) parts.push(`${option.params.crBoxes} fan box${option.params.crBoxes > 1 ? 'es' : ''}`);
   if (option.params.hepaUnits) parts.push(`${option.params.hepaUnits} HEPA`);
   if (option.params.merv13) parts.push('MERV-13');
@@ -182,19 +176,20 @@ function renderInspector() {
     ['Cost', `$${fmt(p.cost)}`],
     ['Power', `${fmt(p.watts)} W`],
     ['Noise', `${fmt(p.dBA, 0)} dBA`],
-    ['Clean-air delivery', `${fmt(p.quantaCADR)} m3/h`],
-    ['Particle filtration', `${fmt(p.pmCADR)} m3/h`],
-    ['Equivalent air changes', `${fmt(p.ecaACH, 1)} eACH`],
+    ['Outdoor air exchange', `${fmt(p.airExchange)} m3/h`],
+    ['Mechanical CADR (devices)', `${fmt(p.quantaCADR)} m3/h`],
+    ['Device PM2.5 CADR', `${fmt(p.pmCADR)} m3/h`],
+    ['HVAC filter credit', `${fmt(p.oaFilterCredit)} m3/h`],
+    ['Total equiv. clean air', `${fmt(p.ecaTotal)} m3/h`],
+    ['Total equiv. air changes', `${fmt(p.ecaACH, 1)} eACH`],
     ['CO2 peak', `${fmt(p.co2Peak)} ppm`],
-    ['PM2.5 peak', `${fmt(p.pmPeak, 1)} ug/m3`],
     ['PM2.5 mean', `${fmt(p.pmMean, 1)} ug/m3`],
-    ['Risk remaining', `${fmt(p.riskRemaining, 1)}%`],
-    ['Risk delta vs baseline', `${p.riskReduction >= 0 ? '-' : '+'}${fmt(Math.abs(p.riskReduction), 1)}%`],
+    ['Risk delta vs baseline', `${p.riskReduction >= 0 ? '-' : '+'}${fmt(Math.abs(p.riskReduction), 1)}% (${fmt(p.riskRemaining, 1)}% left)`],
   ];
   grid.innerHTML = cells.map(([k, v]) => `<div class="insp-cell"><span>${E.escapeHtml(k)}</span><strong>${E.escapeHtml(v)}</strong></div>`).join('');
   const pos = onFrontier ? 'Pareto optimal' : 'dominated by at least one frontier point';
   const src = inspected.source === 'hover' ? 'hovering' : inspected.source;
-  $('inspNote').textContent = `${src === 'recommended' ? 'Recommended' : 'Inspected'} point, ${pos} across cost, power, noise, CO2 peak, PM2.5 mean and remaining risk.`;
+  $('inspNote').textContent = `${src === 'recommended' ? 'Recommended' : 'Inspected'} point, ${pos} across cost, power, noise, CO2 peak, PM2.5 mean and remaining risk. Total clean air ${fmt(p.ecaTotal)} m3/h = outdoor air ${fmt(p.airExchange)} + device CADR ${fmt(p.quantaCADR)} + HVAC filter credit ${fmt(p.oaFilterCredit)}.`;
   applyBtn.disabled = false;
 }
 
@@ -442,7 +437,7 @@ function bindControls() {
       paretoTooltip.innerHTML = `<strong>${E.escapeHtml(describeOption(p))}</strong>
         <div class="tt-row"><span>Cost</span><span>$${fmt(p.cost)}</span></div>
         <div class="tt-row"><span>Risk left</span><span>${fmt(p.riskRemaining, 1)}%</span></div>
-        <div class="tt-row"><span>Clean air</span><span>${fmt(p.quantaCADR)} m3/h</span></div>
+        <div class="tt-row"><span>Device CADR</span><span>${fmt(p.quantaCADR)} m3/h</span></div>
         <div class="tt-row"><span>Noise</span><span>${fmt(p.dBA, 0)} dBA</span></div>`;
       const rect = paretoCanvas.getBoundingClientRect();
       paretoTooltip.style.left = `${Math.min(Math.max(4, event.clientX - rect.left + 12), rect.width - 200)}px`;

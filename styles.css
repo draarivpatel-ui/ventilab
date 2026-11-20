@@ -110,6 +110,7 @@ h1 span { color: var(--accent); }
 .panel-head h2 { font-size: 17px; letter-spacing: -0.02em; margin: 0; font-weight: 720; }
 .status-chip { font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 999px; background: var(--accent-wash); color: #0d513c; border: 1px solid #bcd8ca; white-space: nowrap; }
 .chip-good { background: #e6f6e6; border-color: #b8dfb8; color: var(--good-ink); }
+.chip-warn { background: #fdf3dd; border-color: #ecd9a4; color: #7a5800; }
 .chip-alert { background: #fdeaea; border-color: #f0b9b9; color: #8f1f1f; }
 
 .field { display: block; margin-bottom: 14px; min-width: 0; }

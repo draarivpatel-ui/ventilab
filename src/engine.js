@@ -246,6 +246,7 @@ export function simulate(input = {}, options = {}) {
   // node times never rely on a floating-point round-trip through hours.
   const deriv = (state, tHours, occupancy) => derivatives(state, tHours, p, vent, equip, occupancy);
 
+  const doseFactor = p.infectious * p.quantaRate * (1 - p.maskEfficiency) * p.breathingFlow;
   let state = [p.co2Start, 0, 0, p.pmStart];
   const times = [];
   const co2 = [];
@@ -260,7 +261,8 @@ export function simulate(input = {}, options = {}) {
     quanta.push(s[1]);
     integral.push(s[2]);
     pm.push(s[3]);
-    risk.push(wellsRileyProbability(s[2], p) * 100);
+    const dose = doseFactor * Math.max(0, s[2]);
+    risk.push(dose > 0 ? (1 - Math.exp(-dose)) * 100 : 0);
   };
   push(0, state);
 
@@ -372,7 +374,7 @@ export function quantaIntegralAnalytic(tHours, params) {
   const removal =
     vent.qNatural + p.mechOA + vent.qInfiltration + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR;
   const k = removal / p.volume;
-  if (k <= EPS) return tHours / p.volume;
+  if (k <= EPS) return (tHours * tHours) / (2 * p.volume);
   const cInf = 1 / removal;
   return cInf * (tHours - (1 - Math.exp(-k * tHours)) / k);
 }
@@ -381,6 +383,172 @@ export function quantaIntegralAnalytic(tHours, params) {
 function linearAnalytic(tHours, initial, ratePerHour, sourcePerHour) {
   const equilibrium = sourcePerHour / ratePerHour;
   return equilibrium + (initial - equilibrium) * Math.exp(-ratePerHour * tHours);
+}
+
+/**
+ * Exact end value and exact time integral of dx/dt = source - rate*x over a
+ * span of tHours hours, with the same zero-rate fallback the simulator uses.
+ */
+function linearSpan(initial, ratePerHour, sourcePerHour, tHours) {
+  if (ratePerHour <= EPS) {
+    return {
+      end: initial + sourcePerHour * tHours,
+      integral: initial * tHours + 0.5 * sourcePerHour * tHours * tHours,
+    };
+  }
+  const equilibrium = sourcePerHour / ratePerHour;
+  const decay = Math.exp(-ratePerHour * tHours);
+  return {
+    end: equilibrium + (initial - equilibrium) * decay,
+    integral: equilibrium * tHours + ((initial - equilibrium) * (1 - decay)) / ratePerHour,
+  };
+}
+
+/**
+ * Closed-form counterpart of simulate(): every coefficient in the coupled
+ * ODEs is piecewise constant across the schedule, so each node-to-node span
+ * has an exact exponential solution. Evaluates the same output nodes and the
+ * same peak/mean/final metric definitions, matching the RK4 trajectory to
+ * solver tolerance. The 700-option optimizer uses it to stay instant.
+ */
+export function analyticMetrics(input = {}) {
+  const p = normalizeParams(input);
+  const vent = ventilationRates(p);
+  const equip = equipment(p);
+  const duration = p.durationMin;
+  const boundaries = p.schedule.flatMap((s) => [s.start, s.end]).filter((t) => t > 0 && t < duration);
+  const sampleTimes = [];
+  for (let t = 0; t <= duration + EPS; t += p.sampleMin) sampleTimes.push(Math.min(t, duration));
+  const nodes = sortedUnique([0, duration, ...boundaries, ...sampleTimes]);
+
+  const qExchange = vent.qNatural + p.mechOA + vent.qInfiltration;
+  const co2Rate = qExchange / p.volume;
+  const quantaRemoval =
+    qExchange + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR;
+  const quantaRate = quantaRemoval / p.volume;
+  const pmRate = (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume;
+  const pmSource =
+    ((p.infiltrationFactor * vent.qInfiltration +
+      vent.qNatural +
+      p.mechOA * (1 - equip.oaFilterEfficiency)) *
+      p.outdoorPM) /
+    p.volume;
+  const doseFactor = p.infectious * p.quantaRate * (1 - p.maskEfficiency) * p.breathingFlow;
+
+  let co2Value = p.co2Start;
+  let quantaValue = 0;
+  let dose = 0;
+  let pmValue = p.pmStart;
+
+  const times = [0];
+  const co2 = [co2Value];
+  const pm = [pmValue];
+  const risk = [0];
+
+  for (let n = 0; n < nodes.length - 1; n += 1) {
+    const start = nodes[n];
+    const end = nodes[n + 1];
+    const span = end - start;
+    if (span <= EPS) continue;
+    const occupancy = occupancyAt((start + end) / 2, p);
+    const tHours = span / 60;
+    const co2Source =
+      (occupancy * p.students * p.co2Generation * 1000) / p.volume +
+      co2Rate * p.outdoorCO2;
+    const co2Span = linearSpan(co2Value, co2Rate, co2Source, tHours);
+    const quantaSpan = linearSpan(quantaValue, quantaRate, 1 / p.volume, tHours);
+    const pmSpan = linearSpan(pmValue, pmRate, pmSource, tHours);
+    co2Value = co2Span.end;
+    quantaValue = quantaSpan.end;
+    dose += quantaSpan.integral;
+    pmValue = pmSpan.end;
+    times.push(end);
+    co2.push(co2Value);
+    pm.push(pmValue);
+    const d = doseFactor * Math.max(0, dose);
+    risk.push(d > 0 ? (1 - Math.exp(-d)) * 100 : 0);
+  }
+
+  const ecaTotal = qExchange + equip.quantaCADR + p.mechOA * equip.oaFilterEfficiency;
+  const ecaPerPersonLps = p.students > 0 ? ecaTotal / p.students / 3.6 : 0;
+  const oaPerPersonLps = p.students > 0 ? qExchange / p.students / 3.6 : 0;
+  const max = (arr) => arr.reduce((a, b) => Math.max(a, b), -Infinity);
+  const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+
+  return {
+    times,
+    co2,
+    pm,
+    risk,
+    metrics: {
+      co2Peak: max(co2),
+      co2Mean: mean(co2),
+      co2Final: co2[co2.length - 1],
+      pmPeak: max(pm),
+      pmMean: mean(pm),
+      pmFinal: pm[pm.length - 1],
+      riskFinal: risk[risk.length - 1],
+      dose,
+      ecaTotal,
+      ecaACH: ecaTotal / p.volume,
+      ecaPerPersonLps,
+      oaPerPersonLps,
+      cost: equip.cost,
+      watts: equip.watts,
+      dBA: equip.dBA,
+      naturalCFM: vent.qNatural / 1.699,
+      qNatural: vent.qNatural,
+      qMech: p.mechOA,
+      qInfiltration: vent.qInfiltration,
+      quantaCADR: equip.quantaCADR,
+      pmCADR: equip.pmCADR,
+      oaFilterCredit: p.mechOA * equip.oaFilterEfficiency,
+    },
+  };
+}
+
+/**
+ * Status-chip severity. Each pollutant is scored by how far it exceeds its
+ * own guide threshold, so a hazard many multiples over its limit outranks one
+ * barely over: on a wildfire day PM2.5 leads instead of hiding behind CO2.
+ * High tier: PM2.5 mean >= EPA 35, CO2 peak >= 1500, risk >= 20.
+ * Elevated tier: PM2.5 mean >= WHO 15, CO2 peak >= 1000, risk >= 10.
+ */
+export function severityStatus(m) {
+  const valid = Number.isFinite(m.co2Peak) && Number.isFinite(m.pmMean) && Number.isFinite(m.riskFinal);
+  if (!valid) return { level: 'error', label: 'Solver error', hazards: [], dominant: null };
+  const NAMES = { pm: 'PM2.5', co2: 'CO2', risk: 'infection risk' };
+  const highScaled = [
+    { key: 'pm', ratio: m.pmMean / 35 },
+    { key: 'co2', ratio: m.co2Peak / 1500 },
+    { key: 'risk', ratio: m.riskFinal / 20 },
+  ]
+    .filter((e) => e.ratio >= 1)
+    .sort((a, b) => b.ratio - a.ratio);
+  if (highScaled.length) {
+    return {
+      level: 'high',
+      label: `High ${highScaled.map((e) => NAMES[e.key]).join(' + ')}`,
+      hazards: highScaled.map((e) => e.key),
+      dominant: highScaled[0].key,
+    };
+  }
+  const elevatedScaled = [
+    { key: 'pm', ratio: m.pmMean / 15 },
+    { key: 'co2', ratio: m.co2Peak / 1000 },
+    { key: 'risk', ratio: m.riskFinal / 10 },
+  ]
+    .filter((e) => e.ratio >= 1)
+    .sort((a, b) => b.ratio - a.ratio);
+  if (elevatedScaled.length) {
+    return {
+      level: 'elevated',
+      label: `Elevated ${elevatedScaled.map((e) => NAMES[e.key]).join(' + ')}`,
+      hazards: elevatedScaled.map((e) => e.key),
+      dominant: elevatedScaled[0].key,
+    };
+  }
+  return { level: 'ok', label: 'Within guide bands', hazards: [], dominant: null };
 }
 
 /** Compare RK4 against all three available closed-form solutions. */
@@ -584,30 +752,40 @@ export function interventionOptions(params = {}) {
   return options;
 }
 
-/** Enumerate interventions, filter by budget, then compute the exact frontier. */
-export function optimizeRetrofits(input = {}, budgetLimit) {
+/**
+ * Enumerate interventions, filter by budget, then compute the exact frontier.
+ * Options are scored with analyticMetrics (the closed-form of the same ODE);
+ * pass { simulated: true } to score them with the RK4 simulator instead, which
+ * the test suite uses to prove both paths produce the same frontier.
+ */
+export function optimizeRetrofits(input = {}, budgetLimit, { simulated = false } = {}) {
   const p = normalizeParams(input);
   const limit = budgetLimit === undefined ? p.budget : budgetLimit;
-  const baseline = simulate(baselineParams(p));
+  const baseRisk = simulated
+    ? simulate(baselineParams(p)).metrics.riskFinal
+    : analyticMetrics(baselineParams(p)).metrics.riskFinal;
   const scenarios = interventionOptions(p).map((option) => {
-    const evaluated = evaluateScenario(option, baseline);
+    const evaluated = simulated ? simulate(option) : analyticMetrics(option);
     const equip = equipment(option);
+    const m = evaluated.metrics;
     return {
       label: option.label,
       params: option,
-      cost: evaluated.metrics.cost,
-      watts: evaluated.metrics.watts,
-      dBA: evaluated.metrics.dBA,
-      co2Peak: evaluated.metrics.co2Peak,
-      co2Mean: evaluated.metrics.co2Mean,
-      pmPeak: evaluated.metrics.pmPeak,
-      pmMean: evaluated.metrics.pmMean,
-      riskRemaining: evaluated.metrics.riskFinal,
-      riskReduction: evaluated.metrics.riskReduction,
-      ecaTotal: evaluated.metrics.ecaTotal,
-      ecaACH: evaluated.metrics.ecaACH,
+      cost: m.cost,
+      watts: m.watts,
+      dBA: m.dBA,
+      co2Peak: m.co2Peak,
+      co2Mean: m.co2Mean,
+      pmPeak: m.pmPeak,
+      pmMean: m.pmMean,
+      riskRemaining: m.riskFinal,
+      riskReduction: baseRisk > EPS ? ((baseRisk - m.riskFinal) / baseRisk) * 100 : 0,
+      ecaTotal: m.ecaTotal,
+      ecaACH: m.ecaACH,
       quantaCADR: equip.quantaCADR,
       pmCADR: equip.pmCADR,
+      airExchange: m.qNatural + m.qMech + m.qInfiltration,
+      oaFilterCredit: equip.oaFilterEfficiency * m.qMech,
     };
   });
   const affordable = scenarios.filter((s) => s.cost <= limit + 1e-9);

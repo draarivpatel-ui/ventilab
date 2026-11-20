@@ -68,7 +68,8 @@ function mixColor(a, b, t) {
 
 /** Classroom airflow diagram with window paths, desk grid, plume and devices. */
 export function drawClassroom(canvas, state) {
-  canvas.dataset.ratio = '0.385';
+  const probeWidth = canvas.getBoundingClientRect().width;
+  canvas.dataset.ratio = probeWidth > 0 && probeWidth < 560 ? '0.62' : '0.385';
   const { ctx, width, height } = setupCanvas(canvas);
   const accent = css('--accent', '#14624a');
   const accentWash = css('--accent-wash', '#e5f1eb');
@@ -233,10 +234,40 @@ export function drawClassroom(canvas, state) {
     label(ctx, tags, room.x + 16, room.y + room.h - 14, accent, 'left', 11, '700');
   }
 
-  // Legend-like annotations under the room.
+  // Legend-like annotations under the room. Share one line when the full
+  // captions fit side by side; otherwise stack them, falling back to shorter
+  // phrasing so neither line can clip at the canvas edge.
   const footerY = room.y + room.h + 22;
-  label(ctx, `Ventilation: ${state.qNatural.toFixed(0)} m3/h natural + ${state.mechOA.toFixed(0)} m3/h mechanical + ${(state.qInfiltration || 0).toFixed(0)} m3/h infiltration`, room.x + 2, footerY, ink2, 'left', 11);
-  label(ctx, `Equivalent clean airflow: ${state.ecaTotal.toFixed(0)} m3/h (${(state.ecaACH || 0).toFixed(1)} eACH, CDC guide >=5)`, room.x + room.w, footerY, accent, 'right', 11, '700');
+  const nat = state.qNatural.toFixed(0);
+  const mech = state.mechOA.toFixed(0);
+  const inf = (state.qInfiltration || 0).toFixed(0);
+  const eca = state.ecaTotal.toFixed(0);
+  const ecaAch = (state.ecaACH || 0).toFixed(1);
+  const ventVariants = [
+    `Ventilation: ${nat} m3/h natural + ${mech} m3/h mechanical + ${inf} m3/h infiltration`,
+    `Ventilation: ${nat} natural + ${mech} mech + ${inf} infiltration (m3/h)`,
+    `Air exchange: ${nat}+${mech}+${inf} m3/h`,
+  ];
+  const ecaVariants = [
+    `Equivalent clean airflow: ${eca} m3/h (${ecaAch} eACH, CDC guide >=5)`,
+    `Clean airflow: ${eca} m3/h (${ecaAch} eACH, guide >=5)`,
+    `Clean air: ${eca} m3/h (${ecaAch} eACH)`,
+  ];
+  const fits = (text, size, weight) => {
+    ctx.font = `${weight} ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+    return ctx.measureText(text).width;
+  };
+  const pickVariant = (variants, size, weight) =>
+    variants.find((v) => fits(v, size, weight) <= room.w) || variants[variants.length - 1];
+  const ventFullW = fits(ventVariants[0], 11, '500');
+  const ecaFullW = fits(ecaVariants[0], 11, '700');
+  if (ventFullW + ecaFullW + 16 <= room.w) {
+    label(ctx, ventVariants[0], room.x + 2, footerY, ink2, 'left', 11);
+    label(ctx, ecaVariants[0], room.x + room.w, footerY, accent, 'right', 11, '700');
+  } else {
+    label(ctx, pickVariant(ventVariants, 10, '500'), room.x + 2, footerY - 8, ink2, 'left', 10);
+    label(ctx, pickVariant(ecaVariants, 10, '700'), room.x + 2, footerY + 8, accent, 'left', 10, '700');
+  }
 }
 
 /**
@@ -245,7 +276,8 @@ export function drawClassroom(canvas, state) {
  * closed-window, no-retrofit baseline is drawn as a ghost trace for contrast.
  */
 export function drawTrend(canvas, run, hoverIndex, baseline, schedule) {
-  canvas.dataset.ratio = '0.404';
+  const probeWidth = canvas.getBoundingClientRect().width;
+  canvas.dataset.ratio = probeWidth > 0 && probeWidth < 560 ? '0.56' : '0.404';
   const { ctx, width, height } = setupCanvas(canvas);
   const ink = css('--ink', '#10231d');
   const ink2 = css('--ink-2', '#40554d');
@@ -302,24 +334,44 @@ export function drawTrend(canvas, run, hoverIndex, baseline, schedule) {
 
   // Reference guides: CO2 monitoring levels on the left axis, PM2.5 on the right.
   const co2Guides = [
-    { v: 800, text: 'guide 800', color: css('--good', '#0ca30c') },
-    { v: 1000, text: 'check 1000', color: css('--warning', '#fab219') },
-    { v: 1500, text: 'poor 1500', color: css('--critical', '#d03b3b') },
+    { v: 800, text: `CO2 guide 800`, color: css('--good', '#0ca30c') },
+    { v: 1000, text: `CO2 check 1000`, color: css('--warning', '#fab219') },
+    { v: 1500, text: `CO2 poor 1500`, color: css('--critical', '#d03b3b') },
   ];
-  co2Guides.forEach((g) => {
-    if (g.v > maxCO2) return;
-    dashedLine(ctx, m.l, yCO2(g.v), m.l + pw, yCO2(g.v), g.color, [6, 4]);
-    label(ctx, `CO2 ${g.text}`, m.l + pw - 4, yCO2(g.v) - 8, g.color, 'right', 10, '650');
-  });
   const pmGuides = [
     { v: 15, text: 'WHO 24h PM2.5 15', color: '#8a6500', dash: [3, 4] },
     { v: 35, text: 'EPA 24h PM2.5 35', color: css('--serious', '#ec835a'), dash: [8, 3] },
   ];
-  pmGuides.forEach((g, gi) => {
-    if (g.v > maxPM) return;
-    dashedLine(ctx, m.l, yPM(g.v), m.l + pw, yPM(g.v), g.color, g.dash);
-    label(ctx, g.text, m.l + 4, yPM(g.v) - 8 - gi * 12, g.color, 'left', 10, '650');
-  });
+  // Captions sit just above their guide line near one edge. On dense charts
+  // the lines bunch together, so captions are laid out in screen order with
+  // a minimum gap: a caption may slide down but never crosses a neighbouring
+  // caption, which would mislabel the guides. Lines are drawn now; captions
+  // are deferred until after the curves so text always overprints a trace.
+  const guideLabelY = [];
+  const guideCaptions = [];
+  const stackGuides = (guides, yOf, maxV, xPos, align) => {
+    const placed = guides
+      .filter((g) => g.v <= maxV)
+      .map((g) => ({ ...g, ly: yOf(g.v) - 8 }))
+      .sort((a, b) => a.ly - b.ly);
+    for (let i = 1; i < placed.length; i += 1) {
+      if (placed[i].ly - placed[i - 1].ly < 11) placed[i].ly = placed[i - 1].ly + 11;
+    }
+    if (placed.length) {
+      const overflow = placed[placed.length - 1].ly - (m.t + ph - 7);
+      if (overflow > 0) {
+        const lift = Math.min(overflow, placed[0].ly - (m.t + 6));
+        for (const g of placed) g.ly -= lift;
+      }
+    }
+    for (const g of placed) {
+      dashedLine(ctx, m.l, yOf(g.v), m.l + pw, yOf(g.v), g.color, g.dash || [6, 4]);
+      guideCaptions.push({ text: g.text, x: xPos, y: g.ly, color: g.color, align });
+      guideLabelY.push(g.ly);
+    }
+  };
+  stackGuides(co2Guides, yCO2, maxCO2, m.l + pw - 12, 'right');
+  stackGuides(pmGuides, yPM, maxPM, m.l + 4, 'left');
 
   // Ghost trace: the same classroom with closed windows and no retrofit.
   if (baseline) {
@@ -364,8 +416,13 @@ export function drawTrend(canvas, run, hoverIndex, baseline, schedule) {
     ctx.stroke();
   }
 
-  // Direct labels at the final point, never a number on every point.
+  for (const c of guideCaptions) label(ctx, c.text, c.x, c.y, c.color, c.align, 10, '650');
+
+  // Direct labels at the final point, never a number on every point. Each
+  // label is nudged vertically until it clears guide captions, the baseline
+  // caption and labels already placed at the same right edge.
   const last = series.length - 1;
+  const reservedY = [...guideLabelY, m.t + 10];
   series.forEach((s, i) => {
     const v = s.data[s.data.length - 1];
     const py = s.y(v);
@@ -377,7 +434,29 @@ export function drawTrend(canvas, run, hoverIndex, baseline, schedule) {
     ctx.fill();
     ctx.stroke();
     const text = i === 0 ? `${Math.round(v)} ppm` : i === 1 ? `${v.toFixed(1)} ug` : `${v.toFixed(1)}%`;
-    label(ctx, text, x(maxTime) - 8, py + (i === last ? 13 : -13), s.color, 'right', 10, '700');
+    const preferred = i === last ? py + 13 : py - 13;
+    let ly = null;
+    let spare = null;
+    let spareGap = -1;
+    for (let c = Math.ceil(m.t + 7); c <= Math.floor(m.t + ph - 7); c += 1) {
+      let gap = Infinity;
+      for (const r of reservedY) gap = Math.min(gap, Math.abs(c - r));
+      if (gap > spareGap) { spareGap = gap; spare = c; }
+      if (gap >= 11 && (ly === null || Math.abs(c - preferred) < Math.abs(ly - preferred))) ly = c;
+    }
+    if (ly === null) ly = spare;
+    if (Math.abs(ly - py) > 18) {
+      ctx.strokeStyle = s.color;
+      ctx.globalAlpha = 0.45;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x(maxTime) - 5, py);
+      ctx.lineTo(x(maxTime) - 11, ly);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    label(ctx, text, x(maxTime) - 8, ly, s.color, 'right', 10, '700');
+    reservedY.push(ly);
   });
 
   if (hoverIndex !== null && hoverIndex >= 0 && hoverIndex < run.times.length) {
@@ -397,7 +476,7 @@ export function drawTrend(canvas, run, hoverIndex, baseline, schedule) {
   }
   label(ctx, 'ppm', m.l - 9, m.t - 10, co2, 'right', 10, '700');
   label(ctx, 'ug/m3', m.l + pw + 9, m.t - 10, particle, 'left', 10, '700');
-  label(ctx, 'risk %', m.l + pw - 2, height - 14, risk, 'right', 10, '700');
+  label(ctx, 'risk %', m.l + pw / 2, m.t - 10, risk, 'center', 10, '700');
   ctx.strokeStyle = ink3;
   ctx.beginPath();
   ctx.moveTo(m.l, m.t + ph);
@@ -410,7 +489,8 @@ export function drawTrend(canvas, run, hoverIndex, baseline, schedule) {
 
 /** Cost versus remaining-risk scatter with exact Pareto points highlighted. */
 export function drawPareto(canvas, points, frontier, selectedIndex, hoveredIndex) {
-  canvas.dataset.ratio = '0.365';
+  const probeWidth = canvas.getBoundingClientRect().width;
+  canvas.dataset.ratio = probeWidth > 0 && probeWidth < 560 ? '0.5' : '0.365';
   const { ctx, width, height } = setupCanvas(canvas);
   const ink = css('--ink', '#10231d');
   const ink3 = css('--ink-3', '#5f726a');
@@ -498,9 +578,32 @@ export function drawPareto(canvas, points, frontier, selectedIndex, hoveredIndex
     const best = frontier.reduce((a, b) => (b.riskRemaining < a.riskRemaining ? b : a), frontier[0]);
     ctx.fillStyle = accent;
     ctx.font = '700 10px -apple-system, sans-serif';
-    ctx.textAlign = 'right';
     ctx.textBaseline = 'bottom';
-    ctx.fillText('lowest risk', x(best.cost) - 8, y(best.riskRemaining) + 4);
+    const bx = x(best.cost);
+    const bw = ctx.measureText('lowest risk').width;
+    let tx = bx - 8 - bw;
+    if (tx < m.l) tx = Math.min(bx + 8, m.l + pw - bw);
+    if (tx < m.l) tx = m.l;
+    let ty = y(best.riskRemaining) - 10;
+    for (const p of points) {
+      const px = x(p.cost);
+      if (px + 5 < tx || px - 5 > tx + bw) continue;
+      const py = y(p.riskRemaining);
+      if (py - 5 < ty && py + 14 > ty - 10) ty = Math.min(ty, py - 16);
+    }
+    ty = Math.max(m.t + 12, ty);
+    if (ty < y(best.riskRemaining) - 20) {
+      ctx.strokeStyle = accent;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(tx + bw + 4, ty + 3);
+      ctx.lineTo(x(best.cost) - 3, y(best.riskRemaining) - 9);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    ctx.textAlign = 'left';
+    ctx.fillText('lowest risk', tx, ty);
   }
   ctx.strokeStyle = ink3;
   ctx.beginPath();

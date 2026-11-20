@@ -636,3 +636,112 @@ test('65. pmSteadyRatio is consistent with the simulated long-run level', () => 
     assert.ok(Math.abs(run.metrics.pmFinal - ratio * preset.params.outdoorPM) < 0.5, preset.id);
   }
 });
+
+test('66. wildfire status chip leads with PM2.5 instead of masking it behind CO2', () => {
+  const m = E.evaluateScenario(E.getPreset('wildfire-smoke').params).metrics;
+  assert.ok(m.pmMean > 35 * 4 && m.co2Peak > 1500);
+  const sev = E.severityStatus(m);
+  assert.equal(sev.level, 'high');
+  assert.equal(sev.dominant, 'pm');
+  assert.ok(sev.label.startsWith('High PM2.5'), sev.label);
+  assert.ok(sev.label.includes('CO2'), 'secondary hazards stay visible');
+});
+
+test('67. severity ranks by normalized exceedance, not a fixed pollutant order', () => {
+  const pmLed = E.severityStatus({ co2Peak: 1600, pmMean: 40, riskFinal: 5 });
+  assert.equal(pmLed.dominant, 'pm');
+  assert.equal(pmLed.level, 'high');
+  const co2Only = E.severityStatus({ co2Peak: 2000, pmMean: 5, riskFinal: 2 });
+  assert.equal(co2Only.label, 'High CO2');
+  const riskLed = E.severityStatus({ co2Peak: 1600, pmMean: 5, riskFinal: 60 });
+  assert.equal(riskLed.dominant, 'risk');
+  assert.ok(riskLed.label.startsWith('High infection risk'));
+});
+
+test('68. severity tiers and error path are exact', () => {
+  const elevated = E.severityStatus({ co2Peak: 1100, pmMean: 20, riskFinal: 5 });
+  assert.equal(elevated.level, 'elevated');
+  assert.equal(elevated.dominant, 'pm');
+  const ok = E.severityStatus({ co2Peak: 700, pmMean: 8, riskFinal: 3 });
+  assert.equal(ok.level, 'ok');
+  assert.equal(ok.label, 'Within guide bands');
+  const bad = E.severityStatus({ co2Peak: NaN, pmMean: 8, riskFinal: 3 });
+  assert.equal(bad.level, 'error');
+});
+
+test('69. analytic metrics match the RK4 trajectory on every preset', () => {
+  for (const preset of E.PRESETS) {
+    const a = E.analyticMetrics(preset.params);
+    const s = E.simulate(preset.params);
+    assert.deepEqual(a.times, s.times, `${preset.id} node times`);
+    for (const key of ['co2Peak', 'co2Mean', 'pmPeak', 'pmMean', 'pmFinal', 'co2Final']) {
+      const rel = Math.abs(a.metrics[key] - s.metrics[key]) / Math.max(1e-9, Math.abs(s.metrics[key]));
+      assert.ok(rel < 1e-3, `${preset.id} ${key}: ${a.metrics[key]} vs ${s.metrics[key]}`);
+    }
+    assert.ok(Math.abs(a.metrics.riskFinal - s.metrics.riskFinal) < 0.5, `${preset.id} riskFinal`);
+  }
+});
+
+test('70. analytic and simulated optimizer paths produce identical frontiers', () => {
+  for (const preset of E.PRESETS) {
+    const fast = E.optimizeRetrofits(preset.params, undefined, {});
+    const slow = E.optimizeRetrofits(preset.params, undefined, { simulated: true });
+    assert.deepEqual(fast.frontier.map((f) => f.label), slow.frontier.map((f) => f.label), preset.id);
+    assert.equal(fast.affordable.length, slow.affordable.length, preset.id);
+  }
+});
+
+test('71. full 700-option Pareto recomputation stays under 50 ms and deterministic', () => {
+  const t0 = performance.now();
+  const a = E.optimizeRetrofits(E.getPreset('standard28').params);
+  const ms = performance.now() - t0;
+  assert.equal(a.all.length, 700);
+  assert.ok(ms < 50, `optimizer took ${ms} ms`);
+  const b = E.optimizeRetrofits(E.getPreset('standard28').params);
+  assert.deepEqual(a.frontier.map((f) => f.label), b.frontier.map((f) => f.label));
+  assert.deepEqual(a.affordable.map((f) => f.label), b.affordable.map((f) => f.label));
+});
+
+test('72. clean-air accounting decomposes exactly into outdoor, device and credit terms', () => {
+  const opt = E.optimizeRetrofits(E.getPreset('standard28').params);
+  for (const s of opt.all) {
+    assert.ok(Math.abs(s.ecaTotal - (s.airExchange + s.quantaCADR + s.oaFilterCredit)) < 1e-6, s.label);
+    assert.ok(s.oaFilterCredit >= 0 && s.airExchange >= 0 && s.quantaCADR >= 0, s.label);
+  }
+});
+
+test('73. a window-only option can carry high eACH with zero mechanical CADR', () => {
+  const opt = E.optimizeRetrofits(E.getPreset('standard28').params);
+  const windowOnly = opt.affordable.find(
+    (s) => s.params.windowMode !== 'closed' && s.params.windowOpen > 0 && s.quantaCADR === 0,
+  );
+  assert.ok(windowOnly, 'expected a ventilation-only affordable option');
+  assert.equal(windowOnly.oaFilterCredit, windowOnly.params.mechOA * 0.08);
+  assert.ok(windowOnly.airExchange > 0 && windowOnly.ecaACH > 5);
+  assert.equal(windowOnly.cost, 0);
+  const merv = opt.all.find((s) => s.params.merv13);
+  assert.equal(merv.oaFilterCredit, merv.params.mechOA * 0.55);
+});
+
+test('74. baseline state reads as zero delta against itself, not a missing metric', () => {
+  const out = E.evaluateScenario(E.getPreset('standard28').params);
+  assert.equal(out.metrics.riskReduction, 0);
+  assert.ok(out.metrics.baselineRisk > 0);
+  assert.ok(Math.abs(out.metrics.baselineRisk - out.metrics.riskFinal) < 1e-9);
+  const improved = E.evaluateScenario({ ...E.getPreset('standard28').params, hepaUnits: 2 });
+  assert.ok(improved.metrics.riskReduction > 0);
+  assert.ok(improved.metrics.riskFinal < improved.metrics.baselineRisk);
+});
+
+test('75. closed-form quanta dose is exact at the zero-removal edge', () => {
+  const sealed = {
+    ...base, mechOA: 0, infiltrationACH: 0, windowMode: 'closed', windowOpen: 0,
+    crBoxes: 0, hepaUnits: 0, merv13: false, uvgi: false,
+  };
+  assert.ok(Math.abs(E.quantaIntegralAnalytic(6, sealed) - (6 * 6) / (2 * sealed.volume)) < 1e-12);
+  const open = { ...sealed, mechOA: 200 };
+  const k = (200 + E.ventilationRates(open).qInfiltration) / open.volume;
+  assert.ok(k > 0);
+  const limit = E.quantaIntegralAnalytic(6, { ...open, mechOA: 1e-6, infiltrationACH: 0 });
+  assert.ok(limit > 0 && Number.isFinite(limit));
+});

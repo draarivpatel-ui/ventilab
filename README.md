@@ -57,7 +57,7 @@ classroom:
 
 | Check | Observed |
 |---|---|
-| Tests | **65 passed, 0 failed** |
+| Tests | **75 passed, 0 failed** |
 | CO2 RK4 vs closed form RMSE | **2.40e-8 %** (5.09e-7 ppm), target < 0.05 % |
 | PM2.5 RMSE vs closed form | **4.80e-10 ug/m3** |
 | Integrated quanta RMSE | **1.16e-12** |
@@ -65,7 +65,8 @@ classroom:
 | Refinement delta h/2 vs h/4 | **9.53e-7** worst series |
 | CO2 steady-state residual | **0.072 %** of approach |
 | CO2 time constant | **0.83 h** (210 m3 / 253.5 m3/h exchange incl. infiltration) |
-| Retrofit enumeration | **700 options, 259 affordable, 246 Pareto-optimal** |
+| Retrofit enumeration | **700 options, 259 affordable, 217 Pareto-optimal** |
+| Retrofit optimizer latency | **13.5 ms median** (max 21.2 ms over 10 runs) |
 | Wildfire preset indoor PM2.5 mean | **149.49 ug/m3** with outdoor 180 ug/m3 |
 
 Preset peaks (closed baseline unless the preset specifies ventilation):
@@ -81,7 +82,7 @@ Preset peaks (closed baseline unless the preset specifies ventilation):
 ## Browser verification
 
 The demo choreography in `video/steps.json` was replayed in isolated headless
-Chrome at 1920x1080 against the rebuilt UI:
+Chrome against the rebuilt UI at 1920x1080 and again at 1440x900:
 
 - Every selector step hit-tested via `document.elementFromPoint`; all click
   targets received real `Input.dispatchMouseEvent` clicks and produced the
@@ -91,7 +92,10 @@ Chrome at 1920x1080 against the rebuilt UI:
 - **Zero console errors** and **zero external requests**.
 - No horizontal scroll at 1920x1080, 1440x900 or 390x844
   (`document.documentElement.scrollWidth === innerWidth`).
-- Screenshots were visually inspected at desktop and mobile widths.
+- Trend, classroom and Pareto canvas regions were captured and inspected at
+  1440px and 390px: guide captions keep their line order, end-point labels
+  keep 11px vertical separation with leader ticks when detached, and no
+  caption clips or overlaps.
 
 The narration in `video/narration.txt` is 300 words.
 
@@ -114,7 +118,7 @@ decisions.
 | `src/app.js` | Controls, state, inspector, experiments and DOM wiring |
 | `src/viz.js` | Canvas classroom diagram, trend chart and Pareto chart |
 | `index.html`, `styles.css` | Offline UI |
-| `tests/engine.test.mjs` | 65 deterministic unit tests |
+| `tests/engine.test.mjs` | 75 deterministic unit tests |
 | `video/narration.txt`, `video/steps.json` | Demo script and choreography |
 
 ## License
