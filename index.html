@@ -164,9 +164,10 @@
             </div>
           </div>
           <div class="chart-wrap">
-            <canvas id="trendCanvas" width="1040" height="420" role="img" aria-label="Line chart of simulated CO2, PM2.5 and Wells-Riley risk over six hours with reference guide lines and a dashed baseline"></canvas>
+            <canvas id="trendCanvas" width="1040" height="420" role="img" tabindex="0" aria-describedby="trendKbdHint" aria-label="Line chart of simulated CO2, PM2.5 and Wells-Riley risk over six hours with reference guide lines and a dashed baseline. Focus and use arrow keys to inspect each sampled minute."></canvas>
             <div class="chart-tooltip" id="chartTooltip" role="tooltip" hidden></div>
           </div>
+          <p class="chart-hint" id="trendKbdHint">Focus the chart and use arrow keys to step through the day, Shift plus arrows for bigger steps, Escape to clear.</p>
           <p class="viz-caption">Dashed guides mark CO2 monitoring levels at 800, 1000 and 1500 ppm plus WHO 15 and EPA 35 ug/m3 PM2.5 references. Faint dashed traces show the same classroom with closed windows and no retrofit. Grey bands are low-occupancy periods.</p>
           <div id="dataTable" class="table-wrap" hidden></div>
         </section>
@@ -177,9 +178,10 @@
             <span class="legend-inline"><i class="swatch swatch-front" aria-hidden="true"></i>Pareto optimal <i class="swatch swatch-other" aria-hidden="true"></i>Dominated</span>
           </div>
           <div class="chart-wrap pareto-wrap">
-            <canvas id="paretoCanvas" width="1040" height="380" role="img" aria-label="Scatter plot of retrofit options by cost and remaining airborne risk"></canvas>
+            <canvas id="paretoCanvas" width="1040" height="380" role="img" tabindex="0" aria-describedby="paretoKbdHint" aria-label="Scatter plot of retrofit options by cost and remaining airborne risk. Focus and use arrow keys to walk the frontier, Enter to apply a point."></canvas>
             <div class="chart-tooltip" id="paretoTooltip" role="tooltip" hidden></div>
           </div>
+          <p class="chart-hint" id="paretoKbdHint">Focus the chart and use arrow keys to walk the frontier in cost order, Enter to apply, Escape to clear.</p>
           <p class="viz-caption" id="paretoCaption"></p>
           <div class="pareto-inspector" id="paretoInspector" aria-live="polite">
             <div class="insp-head">
@@ -190,6 +192,33 @@
             <p class="insp-note" id="inspNote"></p>
           </div>
           <div class="intervention-list" id="interventionList" aria-label="Frontier intervention cards"></div>
+        </section>
+
+        <section class="panel sens-panel" aria-labelledby="sensTitle">
+          <div class="panel-head">
+            <h2 id="sensTitle">Parameter sensitivity</h2>
+            <div class="chart-actions">
+              <label class="field sens-metric" for="sensMetric"><span class="sr-only">Sensitivity output</span>
+                <select id="sensMetric" class="select">
+                  <option value="co2Peak">CO2 peak</option>
+                  <option value="pmMean">PM2.5 mean</option>
+                  <option value="energyKwh">Daily energy</option>
+                  <option value="riskFinal">Wells-Riley risk</option>
+                </select>
+              </label>
+              <button type="button" class="link-btn" id="sensTableToggle" aria-expanded="false" aria-controls="sensTableWrap">Table view</button>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="tornadoCanvas" width="1040" height="360" role="img" aria-label="Tornado chart showing the exact change in the selected output when each of four inputs is perturbed twenty percent below and above the current classroom"></canvas>
+          </div>
+          <p class="viz-caption" id="sensCaption"></p>
+          <div id="sensTableWrap" class="table-wrap" hidden></div>
+          <div class="export-row">
+            <button type="button" class="btn btn-ghost" id="exportJson">Download JSON report</button>
+            <button type="button" class="btn btn-ghost" id="exportCsv">Download CSV report</button>
+            <span class="hash-line" id="reportHash" aria-live="polite">The audit fingerprint appears here after a download.</span>
+          </div>
         </section>
 
         <section class="panel verify-panel" aria-labelledby="verifyTitle">
@@ -233,6 +262,7 @@
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <div class="sr-only" id="announcer" role="status" aria-live="polite"></div>
   <script type="module" src="src/app.js"></script>
 </body>
 </html>

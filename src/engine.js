@@ -45,6 +45,7 @@ export const DEFAULTS = Object.freeze({
   hepaUnits: 0,
   merv13: false,
   uvgi: false,
+  cadrScale: 1,
   budget: 1200,
   durationMin: 360,
   stepMin: 2,
@@ -55,6 +56,10 @@ export const DEFAULTS = Object.freeze({
 });
 
 const EPS = 1e-9;
+// Room-temperature air properties used for the conditioning-load estimate:
+// density 1.2 kg/m3, specific heat 1.006 kJ/(kg K). Teaching constants only.
+const AIR_DENSITY = 1.2;
+const AIR_HEAT_CAPACITY = 1.006;
 
 export function clamp(value, low, high) {
   if (!Number.isFinite(value)) return low;
@@ -92,6 +97,7 @@ export function normalizeParams(input = {}) {
   p.hepaUnits = Math.round(clamp(finite(p.hepaUnits, 0), 0, 20));
   p.merv13 = bool(p.merv13);
   p.uvgi = bool(p.uvgi);
+  p.cadrScale = clamp(finite(p.cadrScale, 1), 0, 10);
   p.budget = clamp(finite(p.budget, 0), 0, 100000);
   p.durationMin = clamp(finite(p.durationMin, 360), 1, 1440);
   p.stepMin = clamp(finite(p.stepMin, 2), 0.05, 60);
@@ -146,10 +152,10 @@ export function ventilationRates(params) {
 
 export function equipment(params) {
   const p = normalizeParams(params);
-  const crCADR = p.crBoxes * 400;
-  const hepaCADR = p.hepaUnits * 350;
-  const mervCADR = p.merv13 ? p.volume * 4 : 0;
-  const uvgiCADR = p.uvgi ? p.volume * 3 : 0;
+  const crCADR = p.crBoxes * 400 * p.cadrScale;
+  const hepaCADR = p.hepaUnits * 350 * p.cadrScale;
+  const mervCADR = p.merv13 ? p.volume * 4 * p.cadrScale : 0;
+  const uvgiCADR = p.uvgi ? p.volume * 3 * p.cadrScale : 0;
   const oaFilterEfficiency = p.merv13 ? 0.55 : 0.08;
   return {
     crCADR,
@@ -326,6 +332,7 @@ export function simulate(input = {}, options = {}) {
       qInfiltration: vent.qInfiltration,
       quantaCADR: equip.quantaCADR,
       pmCADR: equip.pmCADR,
+      ...energyMetrics(qExchange, p, equip),
     },
   };
 }
@@ -377,6 +384,26 @@ export function quantaIntegralAnalytic(tHours, params) {
   if (k <= EPS) return (tHours * tHours) / (2 * p.volume);
   const cInf = 1 / removal;
   return cInf * (tHours - (1 - Math.exp(-k * tHours)) / k);
+}
+
+/**
+ * Teaching estimate of the thermal power needed to condition incoming
+ * outdoor air to room temperature: P = q * rho * cp * |dT|, with q in m3/h
+ * converted to kg/s. A positive deltaT means the outdoor stream must be
+ * heated or cooled toward neutral. Device fan energy is tracked separately
+ * through the watts field.
+ */
+function conditioningLoadKW(qExchangeM3h, deltaT) {
+  return (qExchangeM3h * AIR_DENSITY * AIR_HEAT_CAPACITY * Math.abs(deltaT)) / 3600;
+}
+
+function energyMetrics(qExchangeM3h, p, equip) {
+  const conditioningKW = conditioningLoadKW(qExchangeM3h, p.deltaT);
+  const hours = p.durationMin / 60;
+  return {
+    conditioningKW,
+    energyKwh: (conditioningKW + equip.watts / 1000) * hours,
+  };
 }
 
 /** Solve a constant-coefficient linear ODE analytically at a given hour. */
@@ -503,6 +530,7 @@ export function analyticMetrics(input = {}) {
       quantaCADR: equip.quantaCADR,
       pmCADR: equip.pmCADR,
       oaFilterCredit: p.mechOA * equip.oaFilterEfficiency,
+      ...energyMetrics(qExchange, p, equip),
     },
   };
 }
@@ -796,6 +824,102 @@ export function optimizeRetrofits(input = {}, budgetLimit, { simulated = false }
 }
 
 /**
+ * One-at-a-time parameter sensitivity (tornado) analysis.
+ *
+ * Each input is perturbed by the same fraction below and above its current
+ * value while every other input stays fixed. Effects are computed with the
+ * exact closed-form solver (analyticMetrics), so the result is fully
+ * deterministic and identical across runs, browsers and exports.
+ */
+export const SENSITIVITY_PARAMETERS = Object.freeze([
+  {
+    id: 'ach',
+    label: 'Mechanical outdoor air',
+    unit: 'm3/h',
+    get: (p) => p.mechOA,
+    apply: (p, f) => ({ ...p, mechOA: p.mechOA * f }),
+  },
+  {
+    id: 'occupancy',
+    label: 'Occupancy',
+    unit: 'students',
+    get: (p) => p.students,
+    apply: (p, f) => ({ ...p, students: p.students * f }),
+  },
+  {
+    id: 'infiltration',
+    label: 'Envelope infiltration',
+    unit: 'ACH',
+    get: (p) => p.infiltrationACH,
+    apply: (p, f) => ({ ...p, infiltrationACH: p.infiltrationACH * f }),
+  },
+  {
+    id: 'cadr',
+    label: 'Device clean-air delivery',
+    unit: 'x rated CADR',
+    get: (p) => p.cadrScale,
+    apply: (p, f) => ({ ...p, cadrScale: p.cadrScale * f }),
+  },
+]);
+
+export const SENSITIVITY_OUTPUTS = Object.freeze([
+  { id: 'co2Peak', label: 'CO2 peak', unit: 'ppm', digits: 0, get: (m) => m.co2Peak },
+  { id: 'pmMean', label: 'PM2.5 mean', unit: 'ug/m3', digits: 1, get: (m) => m.pmMean },
+  { id: 'energyKwh', label: 'Daily energy', unit: 'kWh', digits: 2, get: (m) => m.energyKwh },
+  { id: 'riskFinal', label: 'Wells-Riley risk', unit: '%', digits: 1, get: (m) => m.riskFinal },
+]);
+
+export function sensitivityAnalysis(input = {}, { fraction = 0.2 } = {}) {
+  const p = normalizeParams(input);
+  const frac = clamp(finite(fraction, 0.2), 0, 0.95);
+  const baseMetrics = analyticMetrics(p).metrics;
+  const outputs = SENSITIVITY_OUTPUTS.map((o) => ({
+    id: o.id,
+    label: o.label,
+    unit: o.unit,
+    digits: o.digits,
+    baseline: o.get(baseMetrics),
+  }));
+  const parameters = SENSITIVITY_PARAMETERS.map((def) => {
+    const lowParams = def.apply(p, 1 - frac);
+    const highParams = def.apply(p, 1 + frac);
+    const lowMetrics = analyticMetrics(lowParams).metrics;
+    const highMetrics = analyticMetrics(highParams).metrics;
+    const effects = {};
+    for (const o of SENSITIVITY_OUTPUTS) {
+      const base = o.get(baseMetrics);
+      const low = o.get(lowMetrics);
+      const high = o.get(highMetrics);
+      effects[o.id] = {
+        low,
+        high,
+        deltaLow: low - base,
+        deltaHigh: high - base,
+        maxDelta: Math.max(Math.abs(low - base), Math.abs(high - base)),
+      };
+    }
+    return {
+      id: def.id,
+      label: def.label,
+      unit: def.unit,
+      baseValue: def.get(p),
+      lowValue: def.get(normalizeParams(lowParams)),
+      highValue: def.get(normalizeParams(highParams)),
+      effects,
+    };
+  });
+  const defIndex = new Map(SENSITIVITY_PARAMETERS.map((def, i) => [def.id, i]));
+  const tornadoOrder = {};
+  for (const o of SENSITIVITY_OUTPUTS) {
+    tornadoOrder[o.id] = parameters
+      .slice()
+      .sort((a, b) => b.effects[o.id].maxDelta - a.effects[o.id].maxDelta || defIndex.get(a.id) - defIndex.get(b.id))
+      .map((param) => param.id);
+  }
+  return { fraction: frac, outputs, parameters, tornadoOrder };
+}
+
+/**
  * Synthetic reference classroom models. These are parameter sets for
  * exploration, not measurements or pilots from any real school.
  */
@@ -999,4 +1123,244 @@ export function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (ch) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[ch]);
+}
+
+/**
+ * Deterministic audit export.
+ *
+ * The audit report is a plain JSON-serializable snapshot of the scenario,
+ * its solved metrics, the one-at-a-time sensitivity table, the optimizer
+ * summary and the solver verification numbers. It contains no timestamps,
+ * random values or environment data, so the same scenario always produces
+ * byte-identical output and a stable fingerprint.
+ */
+
+function utf8Bytes(str) {
+  const out = [];
+  for (let i = 0; i < str.length; i += 1) {
+    let code = str.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
+      const next = str.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        code = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00);
+        i += 1;
+      }
+    }
+    if (code < 0x80) out.push(code);
+    else if (code < 0x800) out.push(0xc0 | (code >> 6), 0x80 | (code & 63));
+    else if (code < 0x10000) out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+    else out.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+  }
+  return out;
+}
+
+/** FNV-1a 32-bit hash of the UTF-8 bytes of the input, as 8 hex digits. */
+export function fnv1a32(text) {
+  const bytes = utf8Bytes(String(text));
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i += 1) {
+    hash ^= bytes[i];
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+/**
+ * Canonical JSON: object keys sorted at every depth, arrays kept in order,
+ * non-finite numbers and unsupported values serialised as null. Two
+ * structurally equal values always produce identical text.
+ */
+export function canonicalJson(value) {
+  const encode = (v) => {
+    if (v === null || typeof v === 'boolean') return JSON.stringify(v);
+    if (typeof v === 'number') return Number.isFinite(v) ? JSON.stringify(v) : 'null';
+    if (typeof v === 'string') return JSON.stringify(v);
+    if (Array.isArray(v)) return `[${v.map(encode).join(',')}]`;
+    if (typeof v === 'object') {
+      const keys = Object.keys(v)
+        .filter((k) => v[k] !== undefined && typeof v[k] !== 'function')
+        .sort();
+      return `{${keys.map((k) => `${JSON.stringify(k)}:${encode(v[k])}`).join(',')}}`;
+    }
+    return 'null';
+  };
+  return encode(value);
+}
+
+/** SHA-256 of the UTF-8 text as hex, or null where WebCrypto is unavailable. */
+export async function sha256Hex(text) {
+  const subtle = globalThis.crypto && globalThis.crypto.subtle;
+  if (!subtle || typeof subtle.digest !== 'function') return null;
+  const digest = await subtle.digest('SHA-256', new Uint8Array(utf8Bytes(String(text))));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Formula-safe CSV cell. Cells that would be interpreted as formulas by a
+ * spreadsheet (=, +, -, @ and control characters at the start) are prefixed
+ * with a single quote; quoting doubles embedded quotes.
+ */
+export function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  let out = String(value);
+  if (/^[=+\-@\t\r]/.test(out)) out = `'${out}`;
+  if (/[",\n\r]/.test(out)) out = `"${out.replace(/"/g, '""')}"`;
+  return out;
+}
+
+const AUDIT_METRIC_UNITS = Object.freeze({
+  co2Peak: 'ppm', co2Mean: 'ppm', co2Final: 'ppm',
+  pmPeak: 'ug/m3', pmMean: 'ug/m3', pmFinal: 'ug/m3',
+  riskFinal: '%', dose: 'quanta-h',
+  ecaTotal: 'm3/h', ecaACH: 'eACH', ecaPerPersonLps: 'L/s', oaPerPersonLps: 'L/s',
+  conditioningKW: 'kW', energyKwh: 'kWh',
+  cost: 'USD', watts: 'W', dBA: 'dBA',
+  qNatural: 'm3/h', qMech: 'm3/h', qInfiltration: 'm3/h',
+  quantaCADR: 'm3/h', pmCADR: 'm3/h',
+});
+
+/** Build the deterministic audit report object for a scenario. */
+export function auditReport(input = {}) {
+  const p = normalizeParams(input);
+  const m = analyticMetrics(p).metrics;
+  const baseline = analyticMetrics(baselineParams(p)).metrics;
+  const opt = optimizeRetrofits(p);
+  const sens = sensitivityAnalysis(p);
+  const verify = verifyAnalytics(p);
+  const conv = convergenceCheck(p);
+  const body = {
+    reportVersion: 1,
+    generator: 'VentiLab audit export',
+    scope: 'Synthetic reference classroom. Educational estimate, not a measurement or design calculation.',
+    scenario: {
+      students: p.students,
+      volume: p.volume,
+      outdoorCO2: p.outdoorCO2,
+      outdoorPM: p.outdoorPM,
+      windSpeed: p.windSpeed,
+      deltaT: p.deltaT,
+      windowMode: p.windowMode,
+      windowOpen: p.windowOpen,
+      windowArea: p.windowArea,
+      mechOA: p.mechOA,
+      infiltrationACH: p.infiltrationACH,
+      infiltrationFactor: p.infiltrationFactor,
+      co2Generation: p.co2Generation,
+      breathingFlow: p.breathingFlow,
+      infectious: p.infectious,
+      quantaRate: p.quantaRate,
+      maskEfficiency: p.maskEfficiency,
+      crBoxes: p.crBoxes,
+      hepaUnits: p.hepaUnits,
+      merv13: p.merv13,
+      uvgi: p.uvgi,
+      cadrScale: p.cadrScale,
+      budget: p.budget,
+      durationMin: p.durationMin,
+    },
+    metrics: Object.fromEntries(
+      Object.keys(AUDIT_METRIC_UNITS).filter((k) => k in m).map((k) => [k, m[k]]),
+    ),
+    baseline: {
+      riskFinal: baseline.riskFinal,
+      co2Peak: baseline.co2Peak,
+      pmMean: baseline.pmMean,
+    },
+    sensitivity: {
+      fraction: sens.fraction,
+      outputs: sens.outputs.map((o) => ({
+        id: o.id, label: o.label, unit: o.unit, baseline: o.baseline,
+      })),
+      parameters: sens.parameters.map((param) => ({
+        id: param.id,
+        label: param.label,
+        unit: param.unit,
+        baseValue: param.baseValue,
+        lowValue: param.lowValue,
+        highValue: param.highValue,
+        effects: Object.fromEntries(
+          SENSITIVITY_OUTPUTS.map((o) => {
+            const e = param.effects[o.id];
+            return [o.id, { low: e.low, high: e.high, deltaLow: e.deltaLow, deltaHigh: e.deltaHigh }];
+          }),
+        ),
+      })),
+    },
+    optimization: {
+      totalOptions: opt.all.length,
+      affordableOptions: opt.affordable.length,
+      frontierOptions: opt.frontier.length,
+      recommended: opt.recommended ? opt.recommended.label : null,
+      cheapest: opt.cheapest ? opt.cheapest.label : null,
+      recommendedDetail: opt.recommended
+        ? {
+            cost: opt.recommended.cost,
+            watts: opt.recommended.watts,
+            dBA: opt.recommended.dBA,
+            co2Peak: opt.recommended.co2Peak,
+            pmMean: opt.recommended.pmMean,
+            riskRemaining: opt.recommended.riskRemaining,
+            riskReduction: opt.recommended.riskReduction,
+            ecaTotal: opt.recommended.ecaTotal,
+            ecaACH: opt.recommended.ecaACH,
+          }
+        : null,
+    },
+    verification: {
+      co2RmsePercent: verify.co2RmsePercent,
+      co2RmsePpm: verify.co2RmsePpm,
+      co2MaxErrorPpm: verify.co2MaxErrorPpm,
+      pmRmseUg: verify.pmRmseUg,
+      quantaRmse: verify.quantaRmse,
+      pmRatio: verify.pmRatio,
+      timeConstantHours: verify.timeConstantHours,
+      steadyResidual: verify.steadyResidual,
+      rk4MinOrder: conv.minOrder,
+      rk4WorstDelta: conv.worstDelta,
+      passed: verify.passed && conv.passed,
+    },
+  };
+  return {
+    ...body,
+    fingerprint: {
+      algorithm: 'FNV-1a-32 over canonical JSON',
+      fnv1a32: fnv1a32(canonicalJson(body)),
+    },
+  };
+}
+
+/** Serialise an audit report to a fixed-column, formula-safe CSV string. */
+export function auditCsv(report) {
+  const lines = ['section,item,measure,value,unit'];
+  const row = (section, item, measure, value, unit = '') => {
+    lines.push([section, item, measure, value, unit].map(csvCell).join(','));
+  };
+  row('meta', 'reportVersion', 'value', report.reportVersion);
+  row('meta', 'generator', 'value', report.generator);
+  row('meta', 'scope', 'value', report.scope);
+  row('meta', 'fingerprint', report.fingerprint.algorithm, report.fingerprint.fnv1a32);
+  for (const [k, v] of Object.entries(report.scenario)) row('scenario', k, 'value', v);
+  for (const [k, v] of Object.entries(report.metrics)) row('metrics', k, 'value', v, AUDIT_METRIC_UNITS[k] || '');
+  for (const [k, v] of Object.entries(report.baseline)) row('baseline', k, 'value', v, AUDIT_METRIC_UNITS[k] || '');
+  for (const param of report.sensitivity.parameters) {
+    row('sensitivity', param.id, 'input_base', param.baseValue, param.unit);
+    row('sensitivity', param.id, 'input_low', param.lowValue, param.unit);
+    row('sensitivity', param.id, 'input_high', param.highValue, param.unit);
+    for (const out of report.sensitivity.outputs) {
+      const e = param.effects[out.id];
+      row('sensitivity', `${param.id}>${out.id}`, 'value_low', e.low, out.unit);
+      row('sensitivity', `${param.id}>${out.id}`, 'value_high', e.high, out.unit);
+      row('sensitivity', `${param.id}>${out.id}`, 'delta_low', e.deltaLow, out.unit);
+      row('sensitivity', `${param.id}>${out.id}`, 'delta_high', e.deltaHigh, out.unit);
+    }
+  }
+  for (const [k, v] of Object.entries(report.optimization)) {
+    if (v !== null && typeof v === 'object') {
+      for (const [dk, dv] of Object.entries(v)) row('optimization', `${k}.${dk}`, 'value', dv, AUDIT_METRIC_UNITS[dk] || '');
+    } else {
+      row('optimization', k, 'value', v === null ? '' : v);
+    }
+  }
+  for (const [k, v] of Object.entries(report.verification)) row('verification', k, 'value', v);
+  return `${lines.join('\r\n')}\r\n`;
 }

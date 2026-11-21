@@ -48,10 +48,13 @@ let evaluated = null;
 let optimization = null;
 let verification = null;
 let convergence = null;
+let sensitivity = null;
 let selectedIntervention = -1;
+let frontierCursor = -1;
 let hoverIndex = null;
 let hoverPareto = null;
 let toastTimer = null;
+let recovering = false;
 
 function showToast(message) {
   const toast = $('toast');
@@ -59,6 +62,11 @@ function showToast(message) {
   toast.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
+}
+
+function announce(message) {
+  const el = $('announcer');
+  if (el) el.textContent = message;
 }
 
 function syncControls() {
@@ -290,18 +298,136 @@ function renderCharts() {
   renderPareto();
 }
 
-function recompute() {
+const SENSITIVITY_OUTPUT_IDS = E.SENSITIVITY_OUTPUTS.map((o) => o.id);
+
+function currentSensitivityOutput() {
+  const sel = $('sensMetric');
+  const id = sel ? sel.value : 'co2Peak';
+  return SENSITIVITY_OUTPUT_IDS.includes(id) ? id : 'co2Peak';
+}
+
+function signedDelta(value, digits) {
+  const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${sign}${fmt(Math.abs(value), digits)}`;
+}
+
+function renderSensitivity() {
+  if (!sensitivity) return;
+  const outputId = currentSensitivityOutput();
+  const output = sensitivity.outputs.find((o) => o.id === outputId);
+  V.drawTornado($('tornadoCanvas'), sensitivity, outputId);
+  const order = sensitivity.tornadoOrder[outputId];
+  const lead = sensitivity.parameters.find((param) => param.id === order[0]);
+  const pct = Math.round(sensitivity.fraction * 100);
+  $('sensCaption').textContent =
+    `Each pair of bars perturbs one input by minus and plus ${pct} percent around the current classroom while every other input stays fixed, solved with the exact closed-form equations. ${lead.label} moves ${output.label} the most. Baseline ${fmt(output.baseline, output.digits)} ${output.unit}.`;
+  const rows = order.map((id) => sensitivity.parameters.find((param) => param.id === id)).map((param) => {
+    const e = param.effects[outputId];
+    return `<tr><td>${E.escapeHtml(param.label)}</td>` +
+      `<td>${fmt(param.lowValue, param.id === 'cadr' ? 1 : 2)} - ${fmt(param.highValue, param.id === 'cadr' ? 1 : 2)} ${E.escapeHtml(param.unit)}</td>` +
+      `<td>${fmt(output.baseline, output.digits)}</td>` +
+      `<td>${signedDelta(e.deltaLow, output.digits)}</td>` +
+      `<td>${signedDelta(e.deltaHigh, output.digits)}</td></tr>`;
+  }).join('');
+  $('sensTableWrap').innerHTML = `<table><thead><tr><th>Input</th><th>Perturbed range</th><th>Baseline (${E.escapeHtml(output.unit)})</th><th>-${pct}% effect</th><th>+${pct}% effect</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function exportReport(kind) {
+  if (!evaluated) return;
+  const report = E.auditReport(physicsParams());
+  const text = kind === 'csv' ? E.auditCsv(report) : `${E.canonicalJson(report)}\n`;
+  const sha = await E.sha256Hex(text);
+  const ext = kind === 'csv' ? 'csv' : 'json';
+  const anchor = document.createElement('a');
+  anchor.href = URL.createObjectURL(new Blob([text], { type: kind === 'csv' ? 'text/csv' : 'application/json' }));
+  anchor.download = `ventilab-audit-${report.fingerprint.fnv1a32}.${ext}`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(anchor.href), 5000);
+  $('reportHash').textContent = `fingerprint fnv1a32 ${report.fingerprint.fnv1a32}${sha ? ` | sha256 ${sha.slice(0, 16)}...` : ''}`;
+  showToast(`Audit report downloaded (${ext.toUpperCase()})`);
+  announce(`Audit report downloaded as ${ext.toUpperCase()}. FNV-1a fingerprint ${report.fingerprint.fnv1a32}.`);
+}
+
+function announceSummary() {
+  if (!evaluated) return;
+  const m = evaluated.metrics;
+  announce(
+    `CO2 peak ${fmt(m.co2Peak)} ppm. PM2.5 mean ${fmt(m.pmMean, 1)} ug/m3. ` +
+    `Wells-Riley risk ${fmt(m.riskFinal, 1)} percent. Equivalent clean air ${fmt(m.ecaACH, 1)} air changes per hour.`,
+  );
+}
+
+const STATE_NUMERIC_FIELDS = [
+  'students', 'volume', 'outdoorCO2', 'outdoorPM', 'windSpeed', 'windowOpen',
+  'mechOA', 'crBoxes', 'hepaUnits', 'budget', 'infectious',
+];
+
+/** Clamp every state field back into its physical range before solving. */
+function sanitizeState() {
+  const clean = E.normalizeParams({ ...state, maskEfficiency: state.masks ? 0.7 : 0 });
+  let fixed = false;
+  for (const key of STATE_NUMERIC_FIELDS) {
+    if (state[key] !== clean[key]) {
+      state[key] = clean[key];
+      fixed = true;
+    }
+  }
+  if (!['closed', 'single', 'cross'].includes(state.windowMode)) {
+    state.windowMode = 'closed';
+    fixed = true;
+  }
+  for (const key of ['merv13', 'uvgi', 'masks']) state[key] = state[key] === true;
+  if (fixed) {
+    syncControls();
+    showToast('An input was out of range and was reset to a safe value.');
+    announce('An input was out of range and was reset to a safe value.');
+  }
+}
+
+function computeAll() {
+  sanitizeState();
   const params = physicsParams();
   evaluated = E.evaluateScenario(params);
   optimization = E.optimizeRetrofits(params);
   verification = E.verifyAnalytics(params);
   convergence = E.convergenceCheck(params);
+  sensitivity = E.sensitivityAnalysis(params);
   if (selectedIntervention >= optimization.affordable.length) selectedIntervention = -1;
+  if (frontierCursor >= optimization.frontier.length) frontierCursor = -1;
   renderMetrics();
   renderTable();
   renderVerification();
   renderCharts();
   renderActionCard();
+  renderSensitivity();
+}
+
+/**
+ * Entry point for every state change. Any failure is recovered by loading the
+ * standard reference classroom once, so a bad input can never leave the
+ * workbench in a broken state.
+ */
+function recompute() {
+  try {
+    computeAll();
+  } catch (err) {
+    if (recovering) throw err;
+    recovering = true;
+    try {
+      Object.assign(state, E.getPreset('standard28').params, { presetId: 'standard28' });
+      state.masks = false;
+      selectedIntervention = -1;
+      frontierCursor = -1;
+      hoverIndex = null;
+      hoverPareto = null;
+      syncControls();
+      computeAll();
+    } finally {
+      recovering = false;
+    }
+    showToast('Invalid input detected. The scenario was reset to the standard classroom.');
+    announce('Invalid input detected. The scenario was reset to the standard classroom.');
+  }
 }
 
 function applyPreset(id, overrides = {}) {
@@ -310,6 +436,7 @@ function applyPreset(id, overrides = {}) {
   Object.assign(state, preset.params, overrides);
   state.masks = false;
   selectedIntervention = -1;
+  frontierCursor = -1;
   hoverIndex = null;
   hoverPareto = null;
   syncControls();
@@ -337,11 +464,15 @@ function readHash() {
   if (result.ok) {
     Object.assign(state, result.state);
     state.masks = false;
+    frontierCursor = -1;
     syncControls();
     recompute();
     showToast('Shared scenario loaded');
+    announce('Shared scenario loaded.');
+    announceSummary();
   } else if (window.location.hash && window.location.hash.length > 1) {
     showToast('Share link rejected. Parameters were invalid');
+    announce('Share link rejected. The link was cleared and the current classroom kept.');
     history.replaceState(null, '', window.location.pathname + window.location.search);
   }
 }
@@ -455,13 +586,101 @@ function bindControls() {
   });
   paretoCanvas.addEventListener('click', (event) => {
     const index = V.paretoIndexFromEvent(paretoCanvas, event, optimization.affordable);
-    if (index !== null) selectIntervention(index);
+    if (index !== null) {
+      selectIntervention(index);
+      frontierCursor = optimization.frontier.indexOf(optimization.affordable[index]);
+      announce(`Selected ${describeOption(optimization.affordable[index])}. Cost $${fmt(optimization.affordable[index].cost)}. Press Enter to apply it to the classroom.`);
+    }
   });
+
+  // Keyboard inspection of the trend chart: arrows step through the sampled
+  // minutes (Shift for six at a time), Home and End jump, Escape clears.
+  trendCanvas.addEventListener('keydown', (event) => {
+    if (!evaluated) return;
+    const count = evaluated.run.times.length;
+    const step = event.shiftKey ? 6 : 1;
+    let handled = true;
+    if (event.key === 'ArrowRight') hoverIndex = hoverIndex === null ? 0 : Math.min(count - 1, hoverIndex + step);
+    else if (event.key === 'ArrowLeft') hoverIndex = hoverIndex === null ? 0 : Math.max(0, hoverIndex - step);
+    else if (event.key === 'Home') hoverIndex = 0;
+    else if (event.key === 'End') hoverIndex = count - 1;
+    else if (event.key === 'Escape') hoverIndex = null;
+    else handled = false;
+    if (!handled) return;
+    event.preventDefault();
+    if (hoverIndex === null) {
+      announce('Chart cursor cleared.');
+    } else {
+      const i = hoverIndex;
+      announce(
+        `${fmt(evaluated.run.times[i])} minutes. CO2 ${fmt(evaluated.run.co2[i])} ppm. ` +
+        `PM2.5 ${fmt(evaluated.run.pm[i], 1)} ug/m3. Risk ${fmt(evaluated.run.risk[i], 2)} percent.`,
+      );
+    }
+    V.drawTrend(trendCanvas, evaluated.run, hoverIndex, evaluated.baseline, evaluated.params.schedule);
+  });
+
+  // Keyboard walk along the exact frontier in cost order. Arrows move the
+  // cursor, Home and End jump, Enter applies the point, Escape clears.
+  paretoCanvas.addEventListener('keydown', (event) => {
+    if (!optimization || !optimization.frontier.length) return;
+    const frontier = optimization.frontier;
+    const size = frontier.length;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      if (frontierCursor >= 0 && frontier[frontierCursor]) {
+        const idx = optimization.affordable.indexOf(frontier[frontierCursor]);
+        if (idx >= 0) applyIntervention(idx);
+      }
+      return;
+    }
+    let handled = true;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') frontierCursor = frontierCursor < 0 ? 0 : (frontierCursor + 1) % size;
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') frontierCursor = frontierCursor < 0 ? size - 1 : (frontierCursor - 1 + size) % size;
+    else if (event.key === 'Home') frontierCursor = 0;
+    else if (event.key === 'End') frontierCursor = size - 1;
+    else if (event.key === 'Escape') { frontierCursor = -1; selectedIntervention = -1; }
+    else handled = false;
+    if (!handled) return;
+    event.preventDefault();
+    if (frontierCursor >= 0) {
+      const point = frontier[frontierCursor];
+      const idx = optimization.affordable.indexOf(point);
+      if (idx >= 0) selectedIntervention = idx;
+      announce(
+        `Frontier point ${frontierCursor + 1} of ${size}. ${describeOption(point)}. ` +
+        `Cost $${fmt(point.cost)}. Risk ${fmt(point.riskRemaining, 1)} percent. Press Enter to apply.`,
+      );
+    } else {
+      announce('Frontier selection cleared.');
+    }
+    renderPareto();
+  });
+
+  // One delegated change listener announces committed control edits (slider
+  // release, radio, checkbox, select) instead of every pointer move.
+  document.querySelector('.controls-panel').addEventListener('change', (event) => {
+    if (event.target.id !== 'sensMetric') announceSummary();
+  });
+
+  $('sensMetric').addEventListener('change', () => {
+    renderSensitivity();
+    const output = sensitivity.outputs.find((o) => o.id === currentSensitivityOutput());
+    announce(`Sensitivity view changed to ${output.label}.`);
+  });
+  $('sensTableToggle').addEventListener('click', (event) => {
+    const wrap = $('sensTableWrap');
+    wrap.hidden = !wrap.hidden;
+    event.currentTarget.setAttribute('aria-expanded', String(!wrap.hidden));
+    event.currentTarget.textContent = wrap.hidden ? 'Table view' : 'Hide table';
+  });
+  $('exportJson').addEventListener('click', () => exportReport('json'));
+  $('exportCsv').addEventListener('click', () => exportReport('csv'));
 
   let resizeTimer = null;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(renderCharts, 90);
+    resizeTimer = setTimeout(() => { renderCharts(); renderSensitivity(); }, 90);
   });
   window.addEventListener('hashchange', readHash);
 }
@@ -479,5 +698,7 @@ window.VentiLab = {
   get verification() { return verification; },
   get convergence() { return convergence; },
   get optimization() { return optimization; },
+  get sensitivity() { return sensitivity; },
+  auditReport: () => E.auditReport(physicsParams()),
   recompute,
 };

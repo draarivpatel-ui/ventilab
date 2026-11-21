@@ -617,6 +617,98 @@ export function drawPareto(canvas, points, frontier, selectedIndex, hoveredIndex
 
 function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 
+function fmtDelta(v, digits) {
+  if (!Number.isFinite(v)) return '0';
+  const s = Math.abs(v) < 0.5 * 10 ** -digits ? 0 : v;
+  const sign = s > 0 ? '+' : s < 0 ? '-' : '';
+  return `${sign}${Math.abs(s).toFixed(digits)}`;
+}
+
+/**
+ * Tornado chart for the one-at-a-time sensitivity analysis. Parameters are
+ * ordered by their largest absolute effect on the chosen output; each row
+ * draws the minus-perturbation bar and the plus-perturbation bar from a
+ * shared baseline axis, with exact signed deltas labeled at the bar ends.
+ */
+export function drawTornado(canvas, analysis, outputId) {
+  const probeWidth = canvas.getBoundingClientRect().width;
+  canvas.dataset.ratio = probeWidth > 0 && probeWidth < 560 ? '0.78' : '0.36';
+  const { ctx, width, height } = setupCanvas(canvas);
+  const ink = css('--ink', '#10231d');
+  const ink2 = css('--ink-2', '#40554d');
+  const ink3 = css('--ink-3', '#5f726a');
+  const grid = css('--grid', '#dce6e0');
+  const surface = css('--surface', '#ffffff');
+  const lowColor = css('--series-1', '#2a78d6');
+  const highColor = css('--series-2', '#eb6834');
+
+  const output = analysis.outputs.find((o) => o.id === outputId) || analysis.outputs[0];
+  const order = analysis.tornadoOrder[output.id];
+  const rows = order.map((id) => analysis.parameters.find((param) => param.id === id));
+  const digits = output.digits === undefined ? 1 : output.digits;
+
+  const m = { l: Math.min(230, Math.max(150, width * 0.24)), r: 86, t: 34, b: 36 };
+  const pw = Math.max(10, width - m.l - m.r);
+  const ph = Math.max(10, height - m.t - m.b);
+  const maxAbs = Math.max(
+    1e-9,
+    ...rows.flatMap((param) => [Math.abs(param.effects[output.id].deltaLow), Math.abs(param.effects[output.id].deltaHigh)]),
+  );
+  const cx = m.l + pw / 2;
+  const x = (delta) => cx + (delta / maxAbs) * (pw / 2 - 8);
+  const rowH = ph / rows.length;
+  const barH = Math.min(22, rowH * 0.3);
+
+  ctx.fillStyle = surface;
+  ctx.fillRect(0, 0, width, height);
+
+  for (const frac of [-1, -0.5, 0, 0.5, 1]) {
+    const gx = cx + frac * (pw / 2 - 8);
+    ctx.strokeStyle = frac === 0 ? ink3 : grid;
+    ctx.lineWidth = frac === 0 ? 1.4 : 1;
+    ctx.beginPath();
+    ctx.moveTo(gx, m.t);
+    ctx.lineTo(gx, m.t + ph);
+    ctx.stroke();
+    if (frac !== 0) label(ctx, fmtDelta(frac * maxAbs, digits), gx, m.t + ph + 13, ink3, 'center', 9.5);
+  }
+  label(ctx, `change in ${output.label} (${output.unit})`, m.l, m.t - 20, ink2, 'left', 10.5, '700');
+  label(ctx, `baseline ${output.baseline.toFixed(digits)} ${output.unit}`, m.l + pw, m.t - 20, ink3, 'right', 10.5, '650');
+  const pct = Math.round(analysis.fraction * 100);
+  label(ctx, `-${pct}% input`, cx - 8, m.t + ph + 27, lowColor, 'right', 9.5, '700');
+  label(ctx, `+${pct}% input`, cx + 8, m.t + ph + 27, highColor, 'left', 9.5, '700');
+
+  rows.forEach((param, i) => {
+    const cy = m.t + rowH * (i + 0.5);
+    const e = param.effects[output.id];
+    label(ctx, param.label, m.l - 8, cy - barH * 0.62, ink, 'right', 11, '700');
+    label(
+      ctx,
+      `${param.lowValue.toFixed(2)} to ${param.highValue.toFixed(2)} ${param.unit}`,
+      m.l - 8, cy + barH * 0.62, ink3, 'right', 9.5,
+    );
+    for (const [delta, color, yOff] of [[e.deltaLow, lowColor, -barH / 2 - 1], [e.deltaHigh, highColor, barH / 2 + 1]]) {
+      const x1 = Math.min(cx, x(delta));
+      const w = Math.max(1.5, Math.abs(x(delta) - cx));
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.85;
+      roundRect(ctx, x1, cy + yOff - barH / 2, w, barH, 3);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      const text = fmtDelta(delta, digits);
+      ctx.font = '650 9.5px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      const textW = ctx.measureText(text).width;
+      // A bar reaching into the label column takes a white in-bar label.
+      const inside = delta < 0 && x(delta) - 5 - textW < m.l;
+      if (inside) label(ctx, text, x(delta) + 5, cy + yOff, '#ffffff', 'left', 9.5, '700');
+      else {
+        const outside = delta >= 0 ? x(delta) + 5 : x(delta) - 5;
+        label(ctx, text, outside, cy + yOff, ink2, delta >= 0 ? 'left' : 'right', 9.5, '650');
+      }
+    }
+  });
+}
+
 /** Map a pointer event to the nearest sample index, or null when outside. */
 export function trendIndexFromEvent(canvas, event, run) {
   const plot = canvas._plot;

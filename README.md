@@ -36,6 +36,19 @@ server, or load it from disk in a browser that permits local ES modules.
   closed-window baseline ghost trace, and grey low-occupancy schedule bands.
 - Shares scenarios through a strictly validated URL hash and prints a
   classroom action card.
+- Runs a **one-at-a-time parameter sensitivity (tornado) analysis** where
+  outdoor airflow, occupancy, infiltration and device CADR are each perturbed
+  20% below and above the current classroom, and the exact closed-form deltas
+  are shown for CO2 peak, PM2.5 mean, daily conditioning energy and
+  Wells-Riley risk.
+- Exports a **deterministic audit report** (JSON and formula-safe CSV) holding
+  the scenario, solved metrics, sensitivity table, optimizer summary and
+  solver verification numbers, fingerprinted with FNV-1a and SHA-256 so the
+  same scenario always produces byte-identical output.
+- Supports full keyboard operation. Arrow keys inspect the trend chart and
+  walk the Pareto frontier, Enter applies a point, and a polite live region
+  announces every committed change. Out-of-range inputs are clamped and
+  recover cleanly.
 
 ## Run it
 
@@ -47,7 +60,7 @@ python3 -m http.server 8000
 Run the deterministic test suite:
 
 ```sh
-node --test tests/engine.test.mjs
+node --test tests/
 ```
 
 ## Observed results
@@ -57,7 +70,7 @@ classroom:
 
 | Check | Observed |
 |---|---|
-| Tests | **75 passed, 0 failed** |
+| Tests | **138 passed, 0 failed** |
 | CO2 RK4 vs closed form RMSE | **2.40e-8 %** (5.09e-7 ppm), target < 0.05 % |
 | PM2.5 RMSE vs closed form | **4.80e-10 ug/m3** |
 | Integrated quanta RMSE | **1.16e-12** |
@@ -65,7 +78,7 @@ classroom:
 | Refinement delta h/2 vs h/4 | **9.53e-7** worst series |
 | CO2 steady-state residual | **0.072 %** of approach |
 | CO2 time constant | **0.83 h** (210 m3 / 253.5 m3/h exchange incl. infiltration) |
-| Retrofit enumeration | **700 options, 259 affordable, 217 Pareto-optimal** |
+| Retrofit enumeration | **700 options, 259 affordable, 246 Pareto-optimal** (661 over all configs, 9 on the cost-risk frontier) |
 | Retrofit optimizer latency | **13.5 ms median** (max 21.2 ms over 10 runs) |
 | Wildfire preset indoor PM2.5 mean | **149.49 ug/m3** with outdoor 180 ug/m3 |
 
@@ -114,11 +127,12 @@ decisions.
 
 | Path | Purpose |
 |---|---|
-| `src/engine.js` | Pure ES module physics engine, optimizer, experiments and share codec |
-| `src/app.js` | Controls, state, inspector, experiments and DOM wiring |
-| `src/viz.js` | Canvas classroom diagram, trend chart and Pareto chart |
+| `src/engine.js` | Pure ES module physics engine, optimizer, experiments, share codec, sensitivity analyzer and audit export |
+| `src/app.js` | Controls, state, inspector, experiments, keyboard access and DOM wiring |
+| `src/viz.js` | Canvas classroom diagram, trend chart, Pareto chart and tornado chart |
 | `index.html`, `styles.css` | Offline UI |
 | `tests/engine.test.mjs` | 75 deterministic unit tests |
+| `tests/wave3.test.mjs` | 63 sensitivity, export and conservation-invariant tests |
 | `video/narration.txt`, `video/steps.json` | Demo script and choreography |
 
 ## License
