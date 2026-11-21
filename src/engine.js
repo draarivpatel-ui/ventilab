@@ -103,7 +103,11 @@ export function normalizeParams(input = {}) {
   p.stepMin = clamp(finite(p.stepMin, 2), 0.05, 60);
   p.sampleMin = clamp(finite(p.sampleMin, 6), 0.1, 1440);
   p.windowMode = ['closed', 'single', 'cross'].includes(p.windowMode) ? p.windowMode : 'closed';
-  p.schedule = Array.isArray(p.schedule) && p.schedule.length ? p.schedule : DEFAULT_SCHEDULE;
+  p.schedule = Array.isArray(p.schedule) && p.schedule.length &&
+    p.schedule.every((s) => s && typeof s === 'object' &&
+      Number.isFinite(s.start) && Number.isFinite(s.end) && Number.isFinite(s.occupancy))
+    ? p.schedule
+    : DEFAULT_SCHEDULE;
   p.co2Start = Number.isFinite(p.co2Start) ? p.co2Start : p.outdoorCO2;
   p.pmStart = Number.isFinite(p.pmStart) ? p.pmStart : p.outdoorPM * p.infiltrationFactor;
   return p;
@@ -195,15 +199,15 @@ export function infectionCleanAirM3h(p, vent, equip) {
 }
 
 /**
- * State: [CO2 ppm, unit-source quanta, integrated unit-source quanta, PM2.5,
- * integrated CO2, integrated PM2.5]. Time t is in hours and every airflow is
- * m3/h, so all terms are per-hour. The last two states carry exact continuous
- * time integrals so reported means never depend on chart sampling.
+ * State: [CO2 ppm, unit-source quanta, PM2.5]. Time t is in hours and every
+ * airflow is m3/h, so all terms are per-hour. The continuous time integrals
+ * of all three concentrations are accumulated outside the RK4 state as exact
+ * closed-form spans, so reported means never depend on chart sampling.
  */
 function derivatives(state, tHours, p, vent, equip, occupancyOverride) {
   const co2 = state[0];
   const quanta = state[1];
-  const pm = state[3];
+  const pm = state[2];
   const tMinutes = tHours * 60;
   const people = (occupancyOverride === undefined
     ? occupancyAt(tMinutes, p) * p.students
@@ -214,7 +218,6 @@ function derivatives(state, tHours, p, vent, equip, occupancyOverride) {
 
   const quantaRemoval = infectionCleanAirM3h(p, vent, equip);
   const dquanta = 1 / p.volume - (quantaRemoval / p.volume) * quanta;
-  const dIntegral = quanta;
 
   const pmSource =
     (p.infiltrationFactor * vent.qInfiltration +
@@ -226,7 +229,7 @@ function derivatives(state, tHours, p, vent, equip, occupancyOverride) {
     (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume;
   const dpm = pmSource - pmSinks * pm;
 
-  return [dco2, dquanta, dIntegral, dpm, co2, pm];
+  return [dco2, dquanta, dpm];
 }
 
 function rk4Step(state, h, t, deriv) {
@@ -245,9 +248,12 @@ function sortedUnique(values) {
 }
 
 /**
- * Integrate the coupled CO2, quanta, dose and PM2.5 equations with RK4.
- * Steps never cross a schedule or sampling boundary, so discontinuities are
- * handled exactly instead of smearing across a step.
+ * Integrate the coupled CO2, quanta and PM2.5 equations with RK4. The
+ * canonical integration grid holds only schedule boundaries and stepMin
+ * sub-steps; chart sampling is a reporting density and never adds knots to
+ * the solve. A reporting point inside a step is evaluated with a partial
+ * RK4 step from the step start state, which keeps the emitted series on the
+ * same solved trajectory without altering it.
  */
 export function simulate(input = {}, options = {}) {
   const p = normalizeParams(input);
@@ -257,14 +263,25 @@ export function simulate(input = {}, options = {}) {
   const boundaries = p.schedule.flatMap((s) => [s.start, s.end]).filter((t) => t > 0 && t < duration);
   const sampleTimes = [];
   for (let t = 0; t <= duration + EPS; t += p.sampleMin) sampleTimes.push(Math.min(t, duration));
-  const nodes = sortedUnique([0, duration, ...boundaries, ...sampleTimes]);
+  const nodes = sortedUnique([0, duration, ...boundaries]);
+  const outputTimes = sortedUnique([0, duration, ...boundaries, ...sampleTimes]);
   // Integrate in hours; the reported time series stays in minutes. Occupancy is
   // piecewise constant, so each span uses its single interior value exactly;
   // node times never rely on a floating-point round-trip through hours.
   const deriv = (state, tHours, occupancy) => derivatives(state, tHours, p, vent, equip, occupancy);
 
   const doseFactor = p.infectious * p.quantaRate * (1 - p.maskEfficiency) * p.breathingFlow;
-  let state = [p.co2Start, 0, 0, p.pmStart, 0, 0];
+  let state = [p.co2Start, 0, p.pmStart];
+  // Exact closed-form time integrals chained across schedule spans. Every
+  // reported mean and dose is the continuous integral of the exact
+  // trajectory, so the metrics are invariant to both stepMin and sampleMin.
+  let co2Integral = 0;
+  let doseIntegral = 0;
+  let pmIntegral = 0;
+  let exactCo2 = p.co2Start;
+  let exactQuanta = 0;
+  let exactPm = p.pmStart;
+  let stepCount = 0;
   const times = [];
   const co2 = [];
   const quanta = [];
@@ -272,24 +289,30 @@ export function simulate(input = {}, options = {}) {
   const pm = [];
   const risk = [];
 
-  const push = (t, s) => {
+  const push = (t, s, dose) => {
     times.push(t);
     co2.push(s[0]);
     quanta.push(s[1]);
-    integral.push(s[2]);
-    pm.push(s[3]);
-    const dose = doseFactor * Math.max(0, s[2]);
-    risk.push(dose > 0 ? (1 - Math.exp(-dose)) * 100 : 0);
+    integral.push(dose);
+    pm.push(s[2]);
+    const d = doseFactor * Math.max(0, dose);
+    risk.push(d > 0 ? (1 - Math.exp(-d)) * 100 : 0);
   };
-  push(0, state);
+  push(0, state, 0);
 
   const qExchange = vent.qNatural + p.mechOA + vent.qInfiltration;
-  const maxRate = Math.max(
-    qExchange / p.volume,
-    infectionCleanAirM3h(p, vent, equip) / p.volume,
-    (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume
-  );
+  const co2Rate = qExchange / p.volume;
+  const quantaRatePerHour = infectionCleanAirM3h(p, vent, equip) / p.volume;
+  const pmRate = (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume;
+  const pmSourceRate =
+    ((p.infiltrationFactor * vent.qInfiltration +
+      vent.qNatural +
+      p.mechOA * (1 - equip.oaFilterEfficiency)) *
+      p.outdoorPM) /
+    p.volume;
+  const maxRate = Math.max(co2Rate, quantaRatePerHour, pmRate);
 
+  let outputIndex = 1;
   for (let n = 0; n < nodes.length - 1; n += 1) {
     const start = nodes[n];
     const end = nodes[n + 1];
@@ -300,20 +323,54 @@ export function simulate(input = {}, options = {}) {
     const spanOccupancy = options.occupancyOverride === undefined
       ? occupancyAt((start + end) / 2, p)
       : options.occupancyOverride;
-    const h = span / steps / 60;
+    const co2SourceRate =
+      (spanOccupancy * p.students * p.co2Generation * 1000) / p.volume + co2Rate * p.outdoorCO2;
+    const spanHours = span / 60;
+    const spanDoseStart = doseIntegral;
+    const spanQuantaStart = exactQuanta;
+    const co2Span = linearSpan(exactCo2, co2Rate, co2SourceRate, spanHours);
+    const quantaSpan = linearSpan(exactQuanta, quantaRatePerHour, 1 / p.volume, spanHours);
+    const pmSpan = linearSpan(exactPm, pmRate, pmSourceRate, spanHours);
+    co2Integral += co2Span.integral;
+    doseIntegral += quantaSpan.integral;
+    pmIntegral += pmSpan.integral;
+    exactCo2 = co2Span.end;
+    exactQuanta = quantaSpan.end;
+    exactPm = pmSpan.end;
+    const doseAt = (t) =>
+      spanDoseStart +
+      linearSpan(spanQuantaStart, quantaRatePerHour, 1 / p.volume, (t - start) / 60).integral;
+    const stepDeriv = (s, t) => deriv(s, t, spanOccupancy);
+    const h = spanHours / steps;
+    const stepMinutes = span / steps;
+    stepCount += steps;
     for (let j = 0; j < steps; j += 1) {
-      state = rk4Step(state, h, (start + j * (span / steps)) / 60, (s, t) => deriv(s, t, spanOccupancy));
+      const t0 = start + j * stepMinutes;
+      const t1 = t0 + stepMinutes;
+      const startState = state;
+      state = rk4Step(startState, h, t0 / 60, stepDeriv);
+      while (outputIndex < outputTimes.length && outputTimes[outputIndex] <= t1 + EPS) {
+        const t = outputTimes[outputIndex];
+        outputIndex += 1;
+        if (t <= t0 + EPS) continue;
+        if (t >= t1 - EPS) {
+          push(t, state, doseAt(t));
+          continue;
+        }
+        const dtHours = (t - t0) / 60;
+        const sampleState = rk4Step(startState, dtHours, t0 / 60, stepDeriv);
+        push(t, sampleState, doseAt(t));
+      }
     }
-    push(end, state);
   }
 
   const ecaTotal = infectionCleanAirM3h(p, vent, equip);
   const ecaPerPersonLps = p.students > 0 ? ecaTotal / p.students / 3.6 : 0;
   const oaPerPersonLps = p.students > 0 ? qExchange / p.students / 3.6 : 0;
   const max = (arr) => arr.reduce((a, b) => Math.max(a, b), -Infinity);
-  // Means are the continuous time integrals carried inside the RK4 solve
-  // (states 4 and 5), so they are exact functions of the physical scenario
-  // and do not depend on chart sampling nodes.
+  // Means are exact continuous time integrals accumulated per integration
+  // step, so they depend only on the physical scenario and never on the
+  // chart sampling nodes.
   const durationHours = duration / 60;
 
   return {
@@ -323,15 +380,16 @@ export function simulate(input = {}, options = {}) {
     integral,
     pm,
     risk,
+    steps: stepCount,
     metrics: {
       co2Peak: max(co2),
-      co2Mean: state[4] / durationHours,
+      co2Mean: co2Integral / durationHours,
       co2Final: co2[co2.length - 1],
       pmPeak: max(pm),
-      pmMean: state[5] / durationHours,
+      pmMean: pmIntegral / durationHours,
       pmFinal: pm[pm.length - 1],
       riskFinal: risk[risk.length - 1],
-      dose: state[2],
+      dose: doseIntegral,
       ecaTotal,
       ecaACH: ecaTotal / p.volume,
       ecaPerPersonLps,
@@ -420,6 +478,7 @@ function energyMetrics(qExchangeM3h, p, equip) {
 
 /** Solve a constant-coefficient linear ODE analytically at a given hour. */
 function linearAnalytic(tHours, initial, ratePerHour, sourcePerHour) {
+  if (ratePerHour <= EPS) return initial + sourcePerHour * tHours;
   const equilibrium = sourcePerHour / ratePerHour;
   return equilibrium + (initial - equilibrium) * Math.exp(-ratePerHour * tHours);
 }
@@ -635,15 +694,20 @@ export function verifyAnalytics(input = {}) {
   const rmse = (arr) => Math.sqrt(arr.reduce((s, e) => s + e * e, 0) / arr.length);
   const meanCo2 = run.metrics.co2Mean;
   const co2Rmse = rmse(co2Errors);
-  const tauHours = qExchange > EPS ? p.volume / qExchange : Infinity;
-  const oneTau = qExchange > EPS ? co2Analytic(tauHours, p, p.co2Start) : NaN;
+  // The tau pair and the equilibrium pair must share one rate threshold:
+  // using qExchange here and co2Rate below leaves a band where tau is
+  // finite but equilibrium is infinite and the fraction collapses to 0.
+  const tauHours = co2Rate > EPS ? 1 / co2Rate : Infinity;
+  const oneTau = co2Rate > EPS ? co2Analytic(tauHours, p, p.co2Start) : NaN;
   const co2Equilibrium = co2Rate > EPS ? p.outdoorCO2 + co2Source / co2Rate : Infinity;
   const netChange = Math.abs(co2Equilibrium - p.co2Start);
-  // Approach fraction is normalized by the full gap to equilibrium, so a
-  // correct solver always reports 1 - exp(-1) after one time constant. With
-  // no exchange or no net change there is no approach to measure.
-  const approachFraction = Number.isFinite(oneTau) && netChange > EPS
-    ? (oneTau - p.co2Start) / netChange
+  // Approach fraction is signed progress from start toward equilibrium over
+  // the full gap, so a correct solver reports 1 - exp(-1) after one time
+  // constant whether CO2 rises or falls. Below ~1e-6 ppm of gap the
+  // subtraction cancels all meaningful digits, so there is no approach to
+  // measure.
+  const approachFraction = Number.isFinite(oneTau) && netChange > 1e-6
+    ? (oneTau - p.co2Start) / (co2Equilibrium - p.co2Start)
     : null;
   const steadyResidual = Number.isFinite(co2Equilibrium) && netChange > EPS
     ? Math.abs(run.co2[run.co2.length - 1] - co2Equilibrium) / netChange
@@ -659,7 +723,7 @@ export function verifyAnalytics(input = {}) {
     approachFraction,
     co2Equilibrium,
     steadyResidual,
-    steps: run.times.length - 1,
+    steps: run.steps,
     passed: (co2Rmse / meanCo2) * 100 < 0.05 && rmse(quantaErrors) < 1e-5,
   };
 }
@@ -681,7 +745,7 @@ export function convergenceCheck(input = {}) {
   const series = [
     { key: 'co2', label: 'CO2' },
     { key: 'pm', label: 'PM2.5' },
-    { key: 'integral', label: 'Integrated quanta' },
+    { key: 'quanta', label: 'Quanta concentration' },
   ];
   const rows = [];
   for (const s of series) {
@@ -694,7 +758,13 @@ export function convergenceCheck(input = {}) {
       deltaCM = Math.max(deltaCM, Math.abs(a[i] - b[i]));
       deltaMF = Math.max(deltaMF, Math.abs(b[i] - c[i]));
     }
-    const order = deltaMF > 0 && deltaCM > 0 ? Math.log2(deltaCM / deltaMF) : Infinity;
+    // An order needs two differing pairs. Identical series with a zero
+    // fine delta is genuine convergence (Infinity); identical coarse and
+    // mid runs that then diverge from fine mean the stability floor
+    // clamped the pair, so the chain cannot certify an order (NaN).
+    const order = deltaCM > 0 && deltaMF > 0
+      ? Math.log2(deltaCM / deltaMF)
+      : deltaMF === 0 ? Infinity : NaN;
     rows.push({ key: s.key, label: s.label, deltaCM, deltaMF, order });
   }
   const worstDelta = Math.max(...rows.map((r) => r.deltaMF));

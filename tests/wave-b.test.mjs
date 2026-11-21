@@ -175,3 +175,102 @@ test('148. both solvers share the corrected removal rate end to end', () => {
   assert.ok(Math.abs(analytic.dose - simulated.dose) / analytic.dose < 1e-6);
   assert.ok(Math.abs(analytic.dose - E.quantaIntegralAnalytic(6, p)) < 1e-9);
 });
+
+// ------------------------------------------------- finding 6: chart sampling
+// is a reporting density and never perturbs the solve
+
+test('149. a single coarse step still reports the exact continuous mean', () => {
+  // Sol's probe: stepMin 60 and sampleMin 60 used to integrate in one 60 min
+  // knot and report 18.75 instead of the exact 50/e integral.
+  const p = {
+    pmStart: 0, outdoorPM: 100, infiltrationFactor: 0.5, infiltrationACH: 1,
+    durationMin: 60, mechOA: 0, windowMode: 'closed', windowOpen: 0,
+    students: 0, schedule: [{ start: 0, end: 60, occupancy: 1 }], stepMin: 60,
+  };
+  const exact = 50 / Math.E;
+  const reference = E.simulate({ ...p, sampleMin: 60 }).metrics;
+  for (const sampleMin of [60, 30, 15, 5, 1]) {
+    const m = E.simulate({ ...p, sampleMin }).metrics;
+    for (const key of ['pmMean', 'co2Mean', 'riskFinal', 'dose', 'pmFinal', 'co2Final', 'pmPeak', 'co2Peak']) {
+      assert.equal(m[key], reference[key], `${key} moved at sampleMin ${sampleMin}: ${m[key]} vs ${reference[key]}`);
+    }
+    assert.ok(Math.abs(m.pmMean - exact) < 1e-9, `pmMean ${m.pmMean} at sampleMin ${sampleMin}`);
+  }
+});
+
+test('150. every shared output time holds the identical trajectory state', () => {
+  // Denser sampling may only add reporting points; coincident output times
+  // must carry identical states on any schedule.
+  const p = { ...E.getPreset('standard28').params, stepMin: 5 };
+  const coarse = E.simulate({ ...p, sampleMin: 30 });
+  const dense = E.simulate({ ...p, sampleMin: 1 });
+  const at = new Map(dense.times.map((t, i) => [t, i]));
+  coarse.times.forEach((t, i) => {
+    const j = at.get(t);
+    assert.ok(j !== undefined, `shared output time ${t} missing`);
+    assert.equal(dense.co2[j], coarse.co2[i]);
+    assert.equal(dense.pm[j], coarse.pm[i]);
+    assert.equal(dense.quanta[j], coarse.quanta[i]);
+    assert.equal(dense.integral[j], coarse.integral[i]);
+    assert.equal(dense.risk[j], coarse.risk[i]);
+  });
+});
+
+test('151. approach fraction is positive when CO2 falls to equilibrium', () => {
+  // Sol's probe: a 1000 ppm start decaying to 420 ppm reported -0.6321.
+  const v = E.verifyAnalytics({
+    volume: 100, students: 0, mechOA: 100, infiltrationACH: 0,
+    windowMode: 'closed', outdoorCO2: 420, co2Start: 1000,
+  });
+  assert.ok(v.approachFraction > 0, `approach ${v.approachFraction}`);
+  assert.ok(Math.abs(v.approachFraction - (1 - Math.exp(-1))) < 1e-12, `approach ${v.approachFraction}`);
+});
+
+test('152. sealed-room verification stays finite and passes', () => {
+  // With zero air exchange the closed-form targets integrate linearly; the
+  // audit must not surface NaN percentages or a false CHECK FAILED chip.
+  const v = E.verifyAnalytics({
+    volume: 200, students: 30, mechOA: 0, infiltrationACH: 0, windowMode: 'closed',
+  });
+  for (const key of ['co2RmsePpm', 'co2RmsePercent', 'pmRmseUg', 'quantaRmse', 'co2MaxErrorPpm']) {
+    assert.ok(Number.isFinite(v[key]), `${key} = ${v[key]}`);
+  }
+  assert.equal(v.passed, true);
+  assert.equal(v.approachFraction, null);
+  assert.equal(v.steadyResidual, null);
+});
+
+test('153. the approach guards share one rate threshold', () => {
+  // Between qExchange > EPS and co2Rate > EPS the tau and equilibrium
+  // estimates disagreed: a finite tau beside an infinite equilibrium
+  // collapsed the fraction to 0. The pair now reports consistently.
+  const v = E.verifyAnalytics({
+    volume: 5000, students: 30, mechOA: 4e-9, infiltrationACH: 0, windowMode: 'closed',
+  });
+  assert.equal(v.approachFraction, null);
+  assert.equal(v.co2Equilibrium, Infinity);
+  assert.equal(v.steadyResidual, null);
+});
+
+test('154. malformed schedule entries fall back to the default day', () => {
+  // A null entry used to throw; an entry missing finite fields silently
+  // NaNed the CO2 means. Malformed arrays take the default schedule whole.
+  for (const schedule of [[null], [{}], [{ start: 0, end: 50, occupancy: NaN }], [42]]) {
+    const r = E.simulate({ students: 5, volume: 100, durationMin: 100, schedule });
+    assert.ok(Number.isFinite(r.metrics.co2Mean));
+    assert.ok(Number.isFinite(r.metrics.pmMean));
+  }
+});
+
+test('155. a floored refinement chain cannot certify a false pass', () => {
+  // When the stability floor clamps coarse and mid to identical step
+  // counts the pair carries no order information; certifying Infinity
+  // order beside a nonzero fine delta passed vacuously.
+  const c = E.convergenceCheck({ ...E.getPreset('standard28').params, mechOA: 5000, volume: 50 });
+  assert.ok(c.worstDelta > 1e-6);
+  assert.equal(c.passed, false);
+  assert.ok(Number.isNaN(c.minOrder));
+  const good = E.convergenceCheck(E.getPreset('standard28').params);
+  assert.equal(good.passed, true);
+  assert.ok(good.minOrder >= 3);
+});
