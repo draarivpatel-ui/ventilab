@@ -408,6 +408,26 @@ export function simulate(input = {}, options = {}) {
   };
 }
 
+/**
+ * Exponential-integrator kernels phi1(x) = (1 - exp(-x)) / x and
+ * phi2(x) = (1 - phi1(x)) / x. For |x| < 1e-4 the closed forms lose
+ * every significant digit to cancellation, so the exact Taylor
+ * polynomial is used instead; -expm1 keeps the rest accurate.
+ */
+function phi1(x) {
+  if (Math.abs(x) < 1e-4) {
+    return 1 - x / 2 + (x * x) / 6 - (x * x * x) / 24 + (x * x * x * x) / 120;
+  }
+  return -Math.expm1(-x) / x;
+}
+
+function phi2(x) {
+  if (Math.abs(x) < 1e-4) {
+    return 0.5 - x / 6 + (x * x) / 24 - (x * x * x) / 120 + (x * x * x * x) / 720;
+  }
+  return (1 - phi1(x)) / x;
+}
+
 /** Exact Wells-Riley probability from an integrated unit-source concentration. */
 export function wellsRileyProbability(integratedConcentration, params) {
   const p = normalizeParams(params);
@@ -427,8 +447,8 @@ export function co2Analytic(tHours, params, initialCO2) {
   const source = (p.students * p.co2Generation * 1000) / p.volume; // ppm/h
   if (q <= EPS) return c0 + source * tHours;
   const k = q / p.volume;
-  const equilibrium = cOut + source / k;
-  return equilibrium + (c0 - equilibrium) * Math.exp(-k * tHours);
+  const x = k * tHours;
+  return cOut + source * tHours * phi1(x) + (c0 - cOut) * Math.exp(-x);
 }
 
 /** Closed-form indoor/outdoor PM2.5 ratio at steady state. */
@@ -453,7 +473,7 @@ export function quantaIntegralAnalytic(tHours, params) {
   const k = removal / p.volume;
   if (k <= EPS) return (tHours * tHours) / (2 * p.volume);
   const cInf = 1 / removal;
-  return cInf * (tHours - (1 - Math.exp(-k * tHours)) / k);
+  return cInf * k * tHours * tHours * phi2(k * tHours);
 }
 
 /**
@@ -479,8 +499,8 @@ function energyMetrics(qExchangeM3h, p, equip) {
 /** Solve a constant-coefficient linear ODE analytically at a given hour. */
 function linearAnalytic(tHours, initial, ratePerHour, sourcePerHour) {
   if (ratePerHour <= EPS) return initial + sourcePerHour * tHours;
-  const equilibrium = sourcePerHour / ratePerHour;
-  return equilibrium + (initial - equilibrium) * Math.exp(-ratePerHour * tHours);
+  const x = ratePerHour * tHours;
+  return sourcePerHour * tHours * phi1(x) + initial * Math.exp(-x);
 }
 
 /**
@@ -494,11 +514,13 @@ function linearSpan(initial, ratePerHour, sourcePerHour, tHours) {
       integral: initial * tHours + 0.5 * sourcePerHour * tHours * tHours,
     };
   }
-  const equilibrium = sourcePerHour / ratePerHour;
-  const decay = Math.exp(-ratePerHour * tHours);
+  const x = ratePerHour * tHours;
+  const decay = Math.exp(-x);
+  const phi = phi1(x);
   return {
-    end: equilibrium + (initial - equilibrium) * decay,
-    integral: equilibrium * tHours + ((initial - equilibrium) * (1 - decay)) / ratePerHour,
+    end: sourcePerHour * tHours * phi + initial * decay,
+    integral:
+      initial * tHours * phi + sourcePerHour * tHours * tHours * phi2(x),
   };
 }
 

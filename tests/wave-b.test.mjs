@@ -274,3 +274,33 @@ test('155. a floored refinement chain cannot certify a false pass', () => {
   assert.equal(good.passed, true);
   assert.ok(good.minOrder >= 3);
 });
+
+// ------------------------------------------------- finding 7: catastrophic
+// cancellation in the analytic integrators as the exchange rate -> 0
+
+test('156. a barely-ventilated room keeps exact means and dose at any sampleMin', () => {
+  // Audit probe: 30 students in 200 m3 with windows closed, no mechanical
+  // air and infiltrationACH 1.1e-9 leaves an exchange rate just above the
+  // zero-rate guard, where (1 - exp(-kt)) / k cancelled to noise. The CO2
+  // mean read -201342 ppm and the accumulated dose went negative at fine
+  // sampling; every sample interval must now give the sealed-room answer.
+  const p = {
+    students: 30, volume: 200, mechOA: 0, infiltrationACH: 1.1e-9,
+    windowMode: 'closed', durationMin: 60,
+    schedule: [{ start: 0, end: 60, occupancy: 1 }], infectious: 1,
+  };
+  const values = [60, 15, 5, 1].map((sampleMin) => E.analyticMetrics({ ...p, sampleMin }).metrics);
+  for (const m of values) {
+    assert.ok(Math.abs(m.co2Mean - 1770) < 1e-6, `co2Mean ${m.co2Mean}`);
+    assert.ok(Math.abs(m.riskFinal - 5.8235466) < 1e-6, `riskFinal ${m.riskFinal}`);
+    assert.ok(m.dose > 0 && m.dose < 0.003, `dose ${m.dose}`);
+  }
+  for (const m of values.slice(1)) {
+    assert.ok(Math.abs(m.co2Mean - values[0].co2Mean) < 1e-9);
+    assert.ok(Math.abs(m.riskFinal - values[0].riskFinal) < 1e-9);
+  }
+  // The exact-zero limit agrees with the tiny-rate result.
+  const sealed = E.analyticMetrics({ ...p, infiltrationACH: 0, sampleMin: 1 }).metrics;
+  assert.ok(Math.abs(sealed.co2Mean - values[0].co2Mean) < 1e-6);
+  assert.ok(Math.abs(sealed.riskFinal - values[0].riskFinal) < 1e-8);
+});
