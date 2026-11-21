@@ -132,8 +132,7 @@ export function occupancyAt(t, params) {
  * Wind and stack are combined by root-sum-square, then scaled by opening
  * fraction. Educational approximation only.
  */
-export function ventilationRates(params) {
-  const p = normalizeParams(params);
+function ventilationRatesNormalized(p) {
   if (p.windowMode === 'closed' || p.windowOpen <= 0) {
     return { qWind: 0, qStack: 0, qNatural: 0, qInfiltration: p.infiltrationACH * p.volume };
   }
@@ -154,8 +153,28 @@ export function ventilationRates(params) {
   };
 }
 
-export function equipment(params) {
-  const p = normalizeParams(params);
+export function ventilationRates(params) {
+  return ventilationRatesNormalized(normalizeParams(params));
+}
+
+const CR_BOX_NOISE_POWER = 10 ** (52 / 10);
+const HEPA_NOISE_POWER = 10 ** (49 / 10);
+
+function equivalentNoiseNormalized(p) {
+  let sum = 0;
+  for (let i = 0; i < p.crBoxes; i += 1) sum += CR_BOX_NOISE_POWER;
+  for (let i = 0; i < p.hepaUnits; i += 1) sum += HEPA_NOISE_POWER;
+  if (sum <= 0) return 0;
+  const level = 10 * Math.log10(sum);
+  return Number.isFinite(level) ? level : 0;
+}
+
+/** Logarithmic addition of independent fan noise sources. MERV-13 is passive. */
+export function equivalentNoise(params) {
+  return equivalentNoiseNormalized(normalizeParams(params));
+}
+
+function equipmentNormalized(p) {
   const crCADR = p.crBoxes * 400 * p.cadrScale;
   const hepaCADR = p.hepaUnits * 350 * p.cadrScale;
   const mervCADR = p.merv13 ? p.volume * 4 * p.cadrScale : 0;
@@ -171,19 +190,12 @@ export function equipment(params) {
     pmCADR: crCADR * 0.9 + hepaCADR * 0.99 + mervCADR * 0.5,
     cost: p.crBoxes * 85 + p.hepaUnits * 260 + (p.merv13 ? 650 : 0) + (p.uvgi ? 900 : 0),
     watts: p.crBoxes * 35 + p.hepaUnits * 55 + (p.merv13 ? 40 : 0) + (p.uvgi ? 25 : 0),
-    dBA: equivalentNoise(p),
+    dBA: equivalentNoiseNormalized(p),
   };
 }
 
-/** Logarithmic addition of independent fan noise sources. MERV-13 is passive. */
-export function equivalentNoise(params) {
-  const p = normalizeParams(params);
-  let sum = 0;
-  for (let i = 0; i < p.crBoxes; i += 1) sum += 10 ** (52 / 10);
-  for (let i = 0; i < p.hepaUnits; i += 1) sum += 10 ** (49 / 10);
-  if (sum <= 0) return 0;
-  const level = 10 * Math.log10(sum);
-  return Number.isFinite(level) ? level : 0;
+export function equipment(params) {
+  return equipmentNormalized(normalizeParams(params));
 }
 
 /**
@@ -421,11 +433,11 @@ function phi1(x) {
   return -Math.expm1(-x) / x;
 }
 
-function phi2(x) {
+function phi2(x, phi = phi1(x)) {
   if (Math.abs(x) < 1e-4) {
     return 0.5 - x / 6 + (x * x) / 24 - (x * x * x) / 120 + (x * x * x * x) / 720;
   }
-  return (1 - phi1(x)) / x;
+  return (1 - phi) / x;
 }
 
 /** Exact Wells-Riley probability from an integrated unit-source concentration. */
@@ -520,7 +532,40 @@ function linearSpan(initial, ratePerHour, sourcePerHour, tHours) {
   return {
     end: sourcePerHour * tHours * phi + initial * decay,
     integral:
-      initial * tHours * phi + sourcePerHour * tHours * tHours * phi2(x),
+      initial * tHours * phi + sourcePerHour * tHours * tHours * phi2(x, phi),
+  };
+}
+
+/**
+ * Schedule- and room-fixed data for the closed-form solver: the sorted
+ * output nodes reduced to per-span length, end time and occupancy-folded
+ * CO2 source base, plus the constants every evaluation shares. Retrofit
+ * options never touch the schedule, sampling, duration or room size, so
+ * optimizeRetrofits builds this once and reuses it for all 700 options.
+ */
+function analyticContext(p) {
+  const duration = p.durationMin;
+  const boundaries = p.schedule.flatMap((s) => [s.start, s.end]).filter((t) => t > 0 && t < duration);
+  const sampleTimes = [];
+  for (let t = 0; t <= duration + EPS; t += p.sampleMin) sampleTimes.push(Math.min(t, duration));
+  const nodes = sortedUnique([0, duration, ...boundaries, ...sampleTimes]);
+  const spans = [];
+  for (let n = 0; n < nodes.length - 1; n += 1) {
+    const start = nodes[n];
+    const end = nodes[n + 1];
+    const span = end - start;
+    if (span <= EPS) continue;
+    const occupancy = occupancyAt((start + end) / 2, p);
+    spans.push({
+      end,
+      tHours: span / 60,
+      co2SourceBase: (occupancy * p.students * p.co2Generation * 1000) / p.volume,
+    });
+  }
+  return {
+    spans,
+    doseFactor: p.infectious * p.quantaRate * (1 - p.maskEfficiency) * p.breathingFlow,
+    durationHours: duration / 60,
   };
 }
 
@@ -530,19 +575,22 @@ function linearSpan(initial, ratePerHour, sourcePerHour, tHours) {
  * has an exact exponential solution. Evaluates the same output nodes and the
  * same peak/mean/final metric definitions, matching the RK4 trajectory to
  * solver tolerance. The 700-option optimizer uses it to stay instant.
+ *
+ * p must already be normalized and ctx must come from analyticContext on
+ * params that share p's schedule, sampling, duration and room constants;
+ * callers inside optimizeRetrofits satisfy this because interventions only
+ * change window and equipment fields. With collect=false the emitted series
+ * are skipped and only metrics are computed; every metric value is identical
+ * either way.
  */
-export function analyticMetrics(input = {}) {
-  const p = normalizeParams(input);
-  const vent = ventilationRates(p);
-  const equip = equipment(p);
-  const duration = p.durationMin;
-  const boundaries = p.schedule.flatMap((s) => [s.start, s.end]).filter((t) => t > 0 && t < duration);
-  const sampleTimes = [];
-  for (let t = 0; t <= duration + EPS; t += p.sampleMin) sampleTimes.push(Math.min(t, duration));
-  const nodes = sortedUnique([0, duration, ...boundaries, ...sampleTimes]);
+function analyticMetricsCore(p, ctx, collect = true) {
+  const vent = ventilationRatesNormalized(p);
+  const equip = equipmentNormalized(p);
 
   const qExchange = vent.qNatural + p.mechOA + vent.qInfiltration;
   const co2Rate = qExchange / p.volume;
+  const co2RateOutdoor = co2Rate * p.outdoorCO2;
+  const invVolume = 1 / p.volume;
   const quantaRemoval = infectionCleanAirM3h(p, vent, equip);
   const quantaRate = quantaRemoval / p.volume;
   const pmRate = (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume;
@@ -552,7 +600,6 @@ export function analyticMetrics(input = {}) {
       p.mechOA * (1 - equip.oaFilterEfficiency)) *
       p.outdoorPM) /
     p.volume;
-  const doseFactor = p.infectious * p.quantaRate * (1 - p.maskEfficiency) * p.breathingFlow;
 
   let co2Value = p.co2Start;
   let quantaValue = 0;
@@ -560,60 +607,59 @@ export function analyticMetrics(input = {}) {
   let pmValue = p.pmStart;
   let co2Integral = 0;
   let pmIntegral = 0;
+  let co2Peak = co2Value;
+  let pmPeak = pmValue;
 
-  const times = [0];
-  const co2 = [co2Value];
-  const pm = [pmValue];
-  const risk = [0];
+  const times = collect ? [0] : null;
+  const co2 = collect ? [co2Value] : null;
+  const pm = collect ? [pmValue] : null;
+  const risk = collect ? [0] : null;
+  const { spans, doseFactor, durationHours } = ctx;
 
-  for (let n = 0; n < nodes.length - 1; n += 1) {
-    const start = nodes[n];
-    const end = nodes[n + 1];
-    const span = end - start;
-    if (span <= EPS) continue;
-    const occupancy = occupancyAt((start + end) / 2, p);
-    const tHours = span / 60;
-    const co2Source =
-      (occupancy * p.students * p.co2Generation * 1000) / p.volume +
-      co2Rate * p.outdoorCO2;
-    const co2Span = linearSpan(co2Value, co2Rate, co2Source, tHours);
-    const quantaSpan = linearSpan(quantaValue, quantaRate, 1 / p.volume, tHours);
-    const pmSpan = linearSpan(pmValue, pmRate, pmSource, tHours);
+  for (let i = 0; i < spans.length; i += 1) {
+    const sp = spans[i];
+    const co2Source = sp.co2SourceBase + co2RateOutdoor;
+    const co2Span = linearSpan(co2Value, co2Rate, co2Source, sp.tHours);
+    const quantaSpan = linearSpan(quantaValue, quantaRate, invVolume, sp.tHours);
+    const pmSpan = linearSpan(pmValue, pmRate, pmSource, sp.tHours);
     co2Value = co2Span.end;
     quantaValue = quantaSpan.end;
     dose += quantaSpan.integral;
     pmValue = pmSpan.end;
     co2Integral += co2Span.integral;
     pmIntegral += pmSpan.integral;
-    times.push(end);
-    co2.push(co2Value);
-    pm.push(pmValue);
-    const d = doseFactor * Math.max(0, dose);
-    risk.push(d > 0 ? (1 - Math.exp(-d)) * 100 : 0);
+    co2Peak = Math.max(co2Peak, co2Value);
+    pmPeak = Math.max(pmPeak, pmValue);
+    if (collect) {
+      times.push(sp.end);
+      co2.push(co2Value);
+      pm.push(pmValue);
+      const d = doseFactor * Math.max(0, dose);
+      risk.push(d > 0 ? (1 - Math.exp(-d)) * 100 : 0);
+    }
   }
 
   const ecaTotal = quantaRemoval;
   const ecaPerPersonLps = p.students > 0 ? ecaTotal / p.students / 3.6 : 0;
   const oaPerPersonLps = p.students > 0 ? qExchange / p.students / 3.6 : 0;
-  const max = (arr) => arr.reduce((a, b) => Math.max(a, b), -Infinity);
-  // Means are exact continuous time integrals summed over the schedule
-  // spans, so they depend only on the physical scenario, never on the
-  // chart sampling nodes.
-  const durationHours = duration / 60;
+  // The last emitted risk value is a function of the final accumulated dose
+  // alone, so it is evaluated once here rather than per span.
+  const dFinal = doseFactor * Math.max(0, dose);
+  const riskFinal = dFinal > 0 ? (1 - Math.exp(-dFinal)) * 100 : 0;
 
   return {
-    times,
-    co2,
-    pm,
-    risk,
+    times: times || [],
+    co2: co2 || [],
+    pm: pm || [],
+    risk: risk || [],
     metrics: {
-      co2Peak: max(co2),
+      co2Peak,
       co2Mean: co2Integral / durationHours,
-      co2Final: co2[co2.length - 1],
-      pmPeak: max(pm),
+      co2Final: co2Value,
+      pmPeak,
       pmMean: pmIntegral / durationHours,
-      pmFinal: pm[pm.length - 1],
-      riskFinal: risk[risk.length - 1],
+      pmFinal: pmValue,
+      riskFinal,
       dose,
       ecaTotal,
       ecaACH: ecaTotal / p.volume,
@@ -632,6 +678,11 @@ export function analyticMetrics(input = {}) {
       ...energyMetrics(qExchange, p, equip),
     },
   };
+}
+
+export function analyticMetrics(input = {}) {
+  const p = normalizeParams(input);
+  return analyticMetricsCore(p, analyticContext(p));
 }
 
 /**
@@ -858,6 +909,47 @@ export function dominates(a, b, objectives = OBJECTIVES) {
 
 /** Exact O(n^2) Pareto filter. No approximation or binning is used. */
 export function paretoFrontier(points, objectives = OBJECTIVES) {
+  if (objectives === OBJECTIVES) {
+    // Same dominance predicate as dominates() with the objective values
+    // extracted once, so the inner loop reads flat slots instead of doing a
+    // property lookup per objective per pair. OBJECTIVES are all 'min'.
+    const n = points.length;
+    const k = OBJECTIVES.length;
+    const vals = new Array(n * k);
+    for (let i = 0; i < n; i += 1) {
+      const point = points[i];
+      for (let j = 0; j < k; j += 1) vals[i * k + j] = point[OBJECTIVES[j].key];
+    }
+    const dominated = new Uint8Array(n);
+    for (let i = 0; i < n; i += 1) {
+      const ci = i * k;
+      const candidate = points[i];
+      for (let j = 0; j < n; j += 1) {
+        if (points[j] === candidate) continue;
+        const cj = j * k;
+        let strictlyBetter = false;
+        let dominatedBy = true;
+        for (let o = 0; o < k; o += 1) {
+          const av = vals[cj + o];
+          const bv = vals[ci + o];
+          if (!Number.isFinite(av) || !Number.isFinite(bv)) {
+            dominatedBy = false;
+            break;
+          }
+          if (av > bv + 1e-9) {
+            dominatedBy = false;
+            break;
+          }
+          if (av < bv - 1e-9) strictlyBetter = true;
+        }
+        if (dominatedBy && strictlyBetter) {
+          dominated[i] = 1;
+          break;
+        }
+      }
+    }
+    return points.filter((_, i) => !dominated[i]);
+  }
   return points.filter(
     (candidate) => !points.some((other) => other !== candidate && dominates(other, candidate, objectives)),
   );
@@ -900,12 +992,14 @@ export function interventionOptions(params = {}) {
 export function optimizeRetrofits(input = {}, budgetLimit, { simulated = false } = {}) {
   const p = normalizeParams(input);
   const limit = budgetLimit === undefined ? p.budget : budgetLimit;
+  const ctx = analyticContext(p);
+  const baseParams = baselineParams(p);
   const baseRisk = simulated
-    ? simulate(baselineParams(p)).metrics.riskFinal
-    : analyticMetrics(baselineParams(p)).metrics.riskFinal;
+    ? simulate(baseParams).metrics.riskFinal
+    : analyticMetricsCore(baseParams, ctx, false).metrics.riskFinal;
   const scenarios = interventionOptions(p).map((option) => {
-    const evaluated = simulated ? simulate(option) : analyticMetrics(option);
-    const equip = equipment(option);
+    const evaluated = simulated ? simulate(option) : analyticMetricsCore(option, ctx, false);
+    const equip = equipmentNormalized(option);
     const m = evaluated.metrics;
     return {
       label: option.label,
