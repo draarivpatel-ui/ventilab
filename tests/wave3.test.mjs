@@ -455,14 +455,14 @@ test('122. auditCsv has the fixed five-column header and exact section counts', 
   const lines = csv.split('\r\n').filter((l) => l.length);
   assert.equal(lines[0], 'section,item,measure,value,unit');
   const count = (sec) => lines.filter((l) => l.startsWith(`${sec},`)).length;
-  assert.equal(count('meta'), 4);
-  assert.equal(count('scenario'), 24);
+  assert.equal(count('meta'), 5);
+  assert.equal(count('scenario'), 29);
   assert.equal(count('metrics'), 22);
   assert.equal(count('baseline'), 3);
   assert.equal(count('sensitivity'), 76);
   assert.equal(count('optimization'), 14);
-  assert.equal(count('verification'), 11);
-  assert.equal(lines.length, 155);
+  assert.equal(count('verification'), 12);
+  assert.equal(lines.length, 162);
 });
 
 test('123. auditCsv embeds the report fingerprint verbatim', () => {
@@ -512,10 +512,15 @@ test('126. no audit CSV cell can begin a spreadsheet formula', () => {
     cells.push(cur);
     return cells[i];
   };
+  // Finite numbers serialize as raw numeric cells, so a leading minus on a
+  // real number is legitimate. Formula escaping protects text cells only.
+  const NUMERIC_CELL = /^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i;
   for (const line of rows) {
     for (let i = 0; i < 5; i += 1) {
       const cell = cellAt(line, i);
-      assert.ok(!/^[=+\-@\t\r]/.test(cell), `formula-unsafe cell ${cell} in ${line}`);
+      if (!NUMERIC_CELL.test(cell)) {
+        assert.ok(!/^[=+\-@\t\r]/.test(cell), `formula-unsafe cell ${cell} in ${line}`);
+      }
     }
     const cells = [0, 1, 2, 3, 4].map((i) => cellAt(line, i));
     assert.equal(cells.length, 5);
@@ -658,6 +663,7 @@ test('138. audit CSV round-trips the reported metric values', () => {
     assert.ok(csv.includes(`metrics,${k},value,${E.csvCell(v)}`), k);
   }
   for (const [k, v] of Object.entries(report.scenario)) {
-    assert.ok(csv.includes(`scenario,${k},value,${E.csvCell(v)}`), k);
+    const cell = v !== null && typeof v === 'object' ? E.canonicalJson(v) : v;
+    assert.ok(csv.includes(`scenario,${k},value,${E.csvCell(cell)}`), k);
   }
 });

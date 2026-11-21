@@ -183,8 +183,22 @@ export function equivalentNoise(params) {
 }
 
 /**
- * State: [CO2 ppm, unit-source quanta, integrated unit-source quanta, PM2.5].
- * Time t is in hours and every airflow is m3/h, so all terms are per-hour.
+ * Equivalent clean-air rate that removes indoor-generated quanta, in m3/h:
+ * the full outdoor air exchange plus recirculating air cleaning, counted
+ * once. The outdoor-air intake filter is not credited here. Filtering the
+ * incoming stream only strips particles from outdoor air (handled in the PM
+ * source term); it cannot remove indoor-generated quanta beyond the exchange
+ * that is already fully credited.
+ */
+export function infectionCleanAirM3h(p, vent, equip) {
+  return vent.qNatural + p.mechOA + vent.qInfiltration + equip.quantaCADR;
+}
+
+/**
+ * State: [CO2 ppm, unit-source quanta, integrated unit-source quanta, PM2.5,
+ * integrated CO2, integrated PM2.5]. Time t is in hours and every airflow is
+ * m3/h, so all terms are per-hour. The last two states carry exact continuous
+ * time integrals so reported means never depend on chart sampling.
  */
 function derivatives(state, tHours, p, vent, equip, occupancyOverride) {
   const co2 = state[0];
@@ -198,10 +212,7 @@ function derivatives(state, tHours, p, vent, equip, occupancyOverride) {
   const co2Source = (people * p.co2Generation * 1000) / p.volume;
   const dco2 = co2Source - (qExchange / p.volume) * (co2 - p.outdoorCO2);
 
-  const quantaRemoval =
-    qExchange +
-    p.mechOA * equip.oaFilterEfficiency +
-    equip.quantaCADR;
+  const quantaRemoval = infectionCleanAirM3h(p, vent, equip);
   const dquanta = 1 / p.volume - (quantaRemoval / p.volume) * quanta;
   const dIntegral = quanta;
 
@@ -215,7 +226,7 @@ function derivatives(state, tHours, p, vent, equip, occupancyOverride) {
     (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume;
   const dpm = pmSource - pmSinks * pm;
 
-  return [dco2, dquanta, dIntegral, dpm];
+  return [dco2, dquanta, dIntegral, dpm, co2, pm];
 }
 
 function rk4Step(state, h, t, deriv) {
@@ -253,7 +264,7 @@ export function simulate(input = {}, options = {}) {
   const deriv = (state, tHours, occupancy) => derivatives(state, tHours, p, vent, equip, occupancy);
 
   const doseFactor = p.infectious * p.quantaRate * (1 - p.maskEfficiency) * p.breathingFlow;
-  let state = [p.co2Start, 0, 0, p.pmStart];
+  let state = [p.co2Start, 0, 0, p.pmStart, 0, 0];
   const times = [];
   const co2 = [];
   const quanta = [];
@@ -275,7 +286,7 @@ export function simulate(input = {}, options = {}) {
   const qExchange = vent.qNatural + p.mechOA + vent.qInfiltration;
   const maxRate = Math.max(
     qExchange / p.volume,
-    (qExchange + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR) / p.volume,
+    infectionCleanAirM3h(p, vent, equip) / p.volume,
     (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume
   );
 
@@ -296,12 +307,14 @@ export function simulate(input = {}, options = {}) {
     push(end, state);
   }
 
-  const ecaTotal =
-    qExchange + equip.quantaCADR + p.mechOA * equip.oaFilterEfficiency;
+  const ecaTotal = infectionCleanAirM3h(p, vent, equip);
   const ecaPerPersonLps = p.students > 0 ? ecaTotal / p.students / 3.6 : 0;
   const oaPerPersonLps = p.students > 0 ? qExchange / p.students / 3.6 : 0;
   const max = (arr) => arr.reduce((a, b) => Math.max(a, b), -Infinity);
-  const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  // Means are the continuous time integrals carried inside the RK4 solve
+  // (states 4 and 5), so they are exact functions of the physical scenario
+  // and do not depend on chart sampling nodes.
+  const durationHours = duration / 60;
 
   return {
     times,
@@ -312,10 +325,10 @@ export function simulate(input = {}, options = {}) {
     risk,
     metrics: {
       co2Peak: max(co2),
-      co2Mean: mean(co2),
+      co2Mean: state[4] / durationHours,
       co2Final: co2[co2.length - 1],
       pmPeak: max(pm),
-      pmMean: mean(pm),
+      pmMean: state[5] / durationHours,
       pmFinal: pm[pm.length - 1],
       riskFinal: risk[risk.length - 1],
       dose: state[2],
@@ -378,8 +391,7 @@ export function quantaIntegralAnalytic(tHours, params) {
   const p = normalizeParams(params);
   const vent = ventilationRates(p);
   const equip = equipment(p);
-  const removal =
-    vent.qNatural + p.mechOA + vent.qInfiltration + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR;
+  const removal = infectionCleanAirM3h(p, vent, equip);
   const k = removal / p.volume;
   if (k <= EPS) return (tHours * tHours) / (2 * p.volume);
   const cInf = 1 / removal;
@@ -450,8 +462,7 @@ export function analyticMetrics(input = {}) {
 
   const qExchange = vent.qNatural + p.mechOA + vent.qInfiltration;
   const co2Rate = qExchange / p.volume;
-  const quantaRemoval =
-    qExchange + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR;
+  const quantaRemoval = infectionCleanAirM3h(p, vent, equip);
   const quantaRate = quantaRemoval / p.volume;
   const pmRate = (vent.qInfiltration + vent.qNatural + p.mechOA + equip.pmCADR) / p.volume;
   const pmSource =
@@ -466,6 +477,8 @@ export function analyticMetrics(input = {}) {
   let quantaValue = 0;
   let dose = 0;
   let pmValue = p.pmStart;
+  let co2Integral = 0;
+  let pmIntegral = 0;
 
   const times = [0];
   const co2 = [co2Value];
@@ -489,6 +502,8 @@ export function analyticMetrics(input = {}) {
     quantaValue = quantaSpan.end;
     dose += quantaSpan.integral;
     pmValue = pmSpan.end;
+    co2Integral += co2Span.integral;
+    pmIntegral += pmSpan.integral;
     times.push(end);
     co2.push(co2Value);
     pm.push(pmValue);
@@ -496,11 +511,14 @@ export function analyticMetrics(input = {}) {
     risk.push(d > 0 ? (1 - Math.exp(-d)) * 100 : 0);
   }
 
-  const ecaTotal = qExchange + equip.quantaCADR + p.mechOA * equip.oaFilterEfficiency;
+  const ecaTotal = quantaRemoval;
   const ecaPerPersonLps = p.students > 0 ? ecaTotal / p.students / 3.6 : 0;
   const oaPerPersonLps = p.students > 0 ? qExchange / p.students / 3.6 : 0;
   const max = (arr) => arr.reduce((a, b) => Math.max(a, b), -Infinity);
-  const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  // Means are exact continuous time integrals summed over the schedule
+  // spans, so they depend only on the physical scenario, never on the
+  // chart sampling nodes.
+  const durationHours = duration / 60;
 
   return {
     times,
@@ -509,10 +527,10 @@ export function analyticMetrics(input = {}) {
     risk,
     metrics: {
       co2Peak: max(co2),
-      co2Mean: mean(co2),
+      co2Mean: co2Integral / durationHours,
       co2Final: co2[co2.length - 1],
       pmPeak: max(pm),
-      pmMean: mean(pm),
+      pmMean: pmIntegral / durationHours,
       pmFinal: pm[pm.length - 1],
       riskFinal: risk[risk.length - 1],
       dose,
@@ -601,9 +619,7 @@ export function verifyAnalytics(input = {}) {
       p.mechOA * (1 - equip.oaFilterEfficiency)) *
     p.outdoorPM /
     p.volume;
-  const quantaRatePerHour =
-    (qExchange + p.mechOA * equip.oaFilterEfficiency + equip.quantaCADR) /
-    p.volume;
+  const quantaRatePerHour = infectionCleanAirM3h(p, vent, equip) / p.volume;
 
   const co2Errors = [];
   const pmErrors = [];
@@ -617,18 +633,21 @@ export function verifyAnalytics(input = {}) {
     quantaErrors.push(run.quanta[i] - targetQuanta);
   }
   const rmse = (arr) => Math.sqrt(arr.reduce((s, e) => s + e * e, 0) / arr.length);
-  const meanCo2 = run.co2.reduce((a, b) => a + b, 0) / run.co2.length;
+  const meanCo2 = run.metrics.co2Mean;
   const co2Rmse = rmse(co2Errors);
-  const tauHours = p.volume / qExchange;
-  const oneTau = co2Analytic(tauHours, p, p.co2Start);
-  const sixHours = co2Analytic(6, p, p.co2Start);
-  const approachFraction = Math.abs(sixHours - p.co2Start) > EPS
-    ? (oneTau - p.co2Start) / (sixHours - p.co2Start)
-    : 0;
+  const tauHours = qExchange > EPS ? p.volume / qExchange : Infinity;
+  const oneTau = qExchange > EPS ? co2Analytic(tauHours, p, p.co2Start) : NaN;
   const co2Equilibrium = co2Rate > EPS ? p.outdoorCO2 + co2Source / co2Rate : Infinity;
-  const steadyResidual = Number.isFinite(co2Equilibrium)
-    ? Math.abs(run.co2[run.co2.length - 1] - co2Equilibrium) / Math.max(EPS, Math.abs(co2Equilibrium - p.co2Start))
-    : 0;
+  const netChange = Math.abs(co2Equilibrium - p.co2Start);
+  // Approach fraction is normalized by the full gap to equilibrium, so a
+  // correct solver always reports 1 - exp(-1) after one time constant. With
+  // no exchange or no net change there is no approach to measure.
+  const approachFraction = Number.isFinite(oneTau) && netChange > EPS
+    ? (oneTau - p.co2Start) / netChange
+    : null;
+  const steadyResidual = Number.isFinite(co2Equilibrium) && netChange > EPS
+    ? Math.abs(run.co2[run.co2.length - 1] - co2Equilibrium) / netChange
+    : null;
   return {
     co2RmsePpm: co2Rmse,
     co2RmsePercent: (co2Rmse / meanCo2) * 100,
@@ -1196,12 +1215,15 @@ export async function sha256Hex(text) {
 }
 
 /**
- * Formula-safe CSV cell. Cells that would be interpreted as formulas by a
- * spreadsheet (=, +, -, @ and control characters at the start) are prefixed
- * with a single quote; quoting doubles embedded quotes.
+ * Formula-safe CSV cell. Finite JavaScript numbers serialize directly as
+ * raw numeric cells (including negatives like -10 or -2.5) so spreadsheet
+ * and parser consumers read them as numbers. Formula-injection escaping
+ * (the leading apostrophe on =, +, -, @ and control characters) applies
+ * only to non-numeric string values; quoting doubles embedded quotes.
  */
 export function csvCell(value) {
   if (value === null || value === undefined) return '';
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
   let out = String(value);
   if (/^[=+\-@\t\r]/.test(out)) out = `'${out}`;
   if (/[",\n\r]/.test(out)) out = `"${out.replace(/"/g, '""')}"`;
@@ -1229,9 +1251,13 @@ export function auditReport(input = {}) {
   const verify = verifyAnalytics(p);
   const conv = convergenceCheck(p);
   const body = {
-    reportVersion: 1,
+    reportVersion: 2,
+    modelVersion: 'ventilab-model-v2',
     generator: 'VentiLab audit export',
     scope: 'Synthetic reference classroom. Educational estimate, not a measurement or design calculation.',
+    // The scenario carries every effective input the report depends on, so
+    // feeding report.scenario back into auditReport reproduces identical
+    // peaks, means and fingerprint.
     scenario: {
       students: p.students,
       volume: p.volume,
@@ -1257,6 +1283,11 @@ export function auditReport(input = {}) {
       cadrScale: p.cadrScale,
       budget: p.budget,
       durationMin: p.durationMin,
+      stepMin: p.stepMin,
+      sampleMin: p.sampleMin,
+      co2Start: p.co2Start,
+      pmStart: p.pmStart,
+      schedule: p.schedule,
     },
     metrics: Object.fromEntries(
       Object.keys(AUDIT_METRIC_UNITS).filter((k) => k in m).map((k) => [k, m[k]]),
@@ -1314,6 +1345,7 @@ export function auditReport(input = {}) {
       quantaRmse: verify.quantaRmse,
       pmRatio: verify.pmRatio,
       timeConstantHours: verify.timeConstantHours,
+      approachFraction: verify.approachFraction,
       steadyResidual: verify.steadyResidual,
       rk4MinOrder: conv.minOrder,
       rk4WorstDelta: conv.worstDelta,
@@ -1323,23 +1355,35 @@ export function auditReport(input = {}) {
   return {
     ...body,
     fingerprint: {
-      algorithm: 'FNV-1a-32 over canonical JSON',
+      algorithm: 'FNV-1a-32',
+      role: 'JSON report payload identifier',
+      note: 'FNV-1a-32 over the canonical JSON of every report field except this fingerprint block.',
       fnv1a32: fnv1a32(canonicalJson(body)),
     },
   };
 }
 
-/** Serialise an audit report to a fixed-column, formula-safe CSV string. */
-export function auditCsv(report) {
+/**
+ * Serialise an audit report to a fixed-column, formula-safe CSV string.
+ * extras.payloadSha256, when supplied, is embedded as the SHA-256 of the
+ * canonical JSON report payload so a CSV alone can verify the JSON export.
+ */
+export function auditCsv(report, extras = {}) {
   const lines = ['section,item,measure,value,unit'];
   const row = (section, item, measure, value, unit = '') => {
     lines.push([section, item, measure, value, unit].map(csvCell).join(','));
   };
   row('meta', 'reportVersion', 'value', report.reportVersion);
+  row('meta', 'modelVersion', 'solver and model version', report.modelVersion);
   row('meta', 'generator', 'value', report.generator);
   row('meta', 'scope', 'value', report.scope);
-  row('meta', 'fingerprint', report.fingerprint.algorithm, report.fingerprint.fnv1a32);
-  for (const [k, v] of Object.entries(report.scenario)) row('scenario', k, 'value', v);
+  row('meta', 'fingerprint', `${report.fingerprint.algorithm} ${report.fingerprint.role}`, report.fingerprint.fnv1a32);
+  if (extras.payloadSha256) {
+    row('meta', 'jsonPayloadSha256', 'SHA-256 of the canonical JSON report payload', extras.payloadSha256);
+  }
+  for (const [k, v] of Object.entries(report.scenario)) {
+    row('scenario', k, 'value', v !== null && typeof v === 'object' ? canonicalJson(v) : v);
+  }
   for (const [k, v] of Object.entries(report.metrics)) row('metrics', k, 'value', v, AUDIT_METRIC_UNITS[k] || '');
   for (const [k, v] of Object.entries(report.baseline)) row('baseline', k, 'value', v, AUDIT_METRIC_UNITS[k] || '');
   for (const param of report.sensitivity.parameters) {

@@ -44,7 +44,10 @@ server, or load it from disk in a browser that permits local ES modules.
 - Exports a **deterministic audit report** (JSON and formula-safe CSV) holding
   the scenario, solved metrics, sensitivity table, optimizer summary and
   solver verification numbers, fingerprinted with FNV-1a and SHA-256 so the
-  same scenario always produces byte-identical output.
+  same scenario always produces byte-identical output. The recorded scenario
+  carries every effective input (schedule, start values, solver steps and
+  model version), so feeding it back into the report replays the exact same
+  peaks, means and fingerprint.
 - Supports full keyboard operation. Arrow keys inspect the trend chart and
   walk the Pareto frontier, Enter applies a point, and a polite live region
   announces every committed change. Out-of-range inputs are clamped and
@@ -70,27 +73,28 @@ classroom:
 
 | Check | Observed |
 |---|---|
-| Tests | **138 passed, 0 failed** |
-| CO2 RK4 vs closed form RMSE | **2.40e-8 %** (5.09e-7 ppm), target < 0.05 % |
+| Tests | **148 passed, 0 failed** |
+| CO2 RK4 vs closed form RMSE | **2.38e-8 %** (5.09e-7 ppm), target < 0.05 % |
 | PM2.5 RMSE vs closed form | **4.80e-10 ug/m3** |
-| Integrated quanta RMSE | **1.16e-12** |
+| Integrated quanta RMSE | **1.01e-12** |
 | RK4 observed convergence order | **4.03** (h, h/2, h/4 refinement) |
 | Refinement delta h/2 vs h/4 | **9.53e-7** worst series |
 | CO2 steady-state residual | **0.072 %** of approach |
+| CO2 approach after one time constant | **63.21 %** (exact 1 - 1/e) |
 | CO2 time constant | **0.83 h** (210 m3 / 253.5 m3/h exchange incl. infiltration) |
 | Retrofit enumeration | **700 options, 259 affordable, 246 Pareto-optimal** (661 over all configs, 9 on the cost-risk frontier) |
-| Retrofit optimizer latency | **13.5 ms median** (max 21.2 ms over 10 runs) |
-| Wildfire preset indoor PM2.5 mean | **149.49 ug/m3** with outdoor 180 ug/m3 |
+| Retrofit optimizer latency | **10.8 ms median** (max 18.8 ms over 10 runs) |
+| Wildfire preset indoor PM2.5 mean | **149.47 ug/m3** with outdoor 180 ug/m3 |
 
 Preset peaks (closed baseline unless the preset specifies ventilation):
 
 | Preset | CO2 peak (ppm) | PM2.5 mean (ug/m3) | Wells-Riley risk (%) | eACH |
 |---|---:|---:|---:|---:|
-| Standard 28-student classroom | 2254.2 | 10.02 | 37.33 | 1.28 |
-| Crowded science lab | 2437.7 | 12.75 | 54.82 | 1.76 |
-| Rural natural-ventilation room | 466.5 | 7.93 | 1.48 | 34.98 |
-| Wildfire smoke day | 1890.2 | 149.49 | 36.78 | 1.58 |
-| DIY Corsi-Rosenthal comparison | 739.2 | 14.50 | 7.97 | 9.68 |
+| Standard 28-student classroom | 2254.2 | 10.02 | 38.72 | 1.21 |
+| Crowded science lab | 2437.7 | 12.75 | 56.72 | 1.66 |
+| Rural natural-ventilation room | 466.5 | 7.95 | 1.48 | 34.98 |
+| Wildfire smoke day | 1890.2 | 149.47 | 38.12 | 1.50 |
+| DIY Corsi-Rosenthal comparison | 739.2 | 14.51 | 8.01 | 9.62 |
 
 ## Browser verification
 
@@ -133,6 +137,7 @@ decisions.
 | `index.html`, `styles.css` | Offline UI |
 | `tests/engine.test.mjs` | 75 deterministic unit tests |
 | `tests/wave3.test.mjs` | 63 sensitivity, export and conservation-invariant tests |
+| `tests/wave-b.test.mjs` | 10 regression tests for clean-air accounting, exact means, verification and export fixes |
 | `video/narration.txt`, `video/steps.json` | Demo script and choreography |
 
 ## License

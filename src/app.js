@@ -197,7 +197,7 @@ function renderInspector() {
   grid.innerHTML = cells.map(([k, v]) => `<div class="insp-cell"><span>${E.escapeHtml(k)}</span><strong>${E.escapeHtml(v)}</strong></div>`).join('');
   const pos = onFrontier ? 'Pareto optimal' : 'dominated by at least one frontier point';
   const src = inspected.source === 'hover' ? 'hovering' : inspected.source;
-  $('inspNote').textContent = `${src === 'recommended' ? 'Recommended' : 'Inspected'} point, ${pos} across cost, power, noise, CO2 peak, PM2.5 mean and remaining risk. Total clean air ${fmt(p.ecaTotal)} m3/h = outdoor air ${fmt(p.airExchange)} + device CADR ${fmt(p.quantaCADR)} + HVAC filter credit ${fmt(p.oaFilterCredit)}.`;
+  $('inspNote').textContent = `${src === 'recommended' ? 'Recommended' : 'Inspected'} point, ${pos} across cost, power, noise, CO2 peak, PM2.5 mean and remaining risk. Total clean air ${fmt(p.ecaTotal)} m3/h = outdoor air ${fmt(p.airExchange)} + recirculating CADR ${fmt(p.quantaCADR)}; the HVAC intake filter credit of ${fmt(p.oaFilterCredit)} m3/h applies to incoming particles only.`;
   applyBtn.disabled = false;
 }
 
@@ -248,15 +248,18 @@ function renderVerification() {
   $('verifyChip').textContent = v.passed && c.passed ? 'PASS' : 'CHECK FAILED';
   $('verifyChip').className = `status-chip ${v.passed && c.passed ? 'chip-good' : 'chip-alert'}`;
   const worstRow = c.rows.reduce((a, b) => (b.deltaMF > a.deltaMF ? b : a), c.rows[0]);
+  const residualText = v.steadyResidual === null ? 'N/A' : `${fmt(v.steadyResidual * 100, 3)}% of approach`;
+  const approachText = v.approachFraction === null ? 'N/A' : `${fmt(v.approachFraction * 100, 1)}%`;
+  const tauText = Number.isFinite(v.timeConstantHours) ? `${fmt(v.timeConstantHours, 2)} h` : 'N/A';
   $('verifyGrid').innerHTML = `
     <div class="verify-item"><span>CO2 RK4 vs closed form</span><strong>${v.co2RmsePercent.toExponential(2)}%</strong></div>
     <div class="verify-item"><span>PM2.5 RMSE</span><strong>${v.pmRmseUg.toExponential(2)} ug/m3</strong></div>
     <div class="verify-item"><span>Integrated quanta</span><strong>${v.quantaRmse.toExponential(2)}</strong></div>
     <div class="verify-item"><span>RK4 observed order</span><strong>${fmt(c.minOrder, 2)} (expect ~4)</strong></div>
     <div class="verify-item"><span>Refinement delta, h/2 vs h/4</span><strong>${worstRow.deltaMF.toExponential(2)} (${worstRow.label})</strong></div>
-    <div class="verify-item"><span>CO2 steady-state residual</span><strong>${fmt(v.steadyResidual * 100, 3)}% of approach</strong></div>
-    <div class="verify-item"><span>CO2 time constant</span><strong>${fmt(v.timeConstantHours, 2)} h</strong></div>
-    <div class="verify-item"><span>Approach after one tau</span><strong>${fmt(v.approachFraction * 100, 1)}%</strong></div>
+    <div class="verify-item"><span>CO2 steady-state residual</span><strong>${residualText}</strong></div>
+    <div class="verify-item"><span>CO2 time constant</span><strong>${tauText}</strong></div>
+    <div class="verify-item"><span>Approach after one tau</span><strong>${approachText}</strong></div>
     <div class="verify-item"><span>PM indoor/outdoor ratio</span><strong>${fmt(v.pmRatio, 3)}</strong></div>`;
 }
 
@@ -335,7 +338,9 @@ function renderSensitivity() {
 async function exportReport(kind) {
   if (!evaluated) return;
   const report = E.auditReport(physicsParams());
-  const text = kind === 'csv' ? E.auditCsv(report) : `${E.canonicalJson(report)}\n`;
+  const jsonText = `${E.canonicalJson(report)}\n`;
+  const payloadSha = await E.sha256Hex(jsonText);
+  const text = kind === 'csv' ? E.auditCsv(report, { payloadSha256: payloadSha }) : jsonText;
   const sha = await E.sha256Hex(text);
   const ext = kind === 'csv' ? 'csv' : 'json';
   const anchor = document.createElement('a');
@@ -343,9 +348,9 @@ async function exportReport(kind) {
   anchor.download = `ventilab-audit-${report.fingerprint.fnv1a32}.${ext}`;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(anchor.href), 5000);
-  $('reportHash').textContent = `fingerprint fnv1a32 ${report.fingerprint.fnv1a32}${sha ? ` | sha256 ${sha.slice(0, 16)}...` : ''}`;
+  $('reportHash').textContent = `JSON payload id fnv1a32 ${report.fingerprint.fnv1a32}${sha ? ` | file sha256 ${sha}` : ''}`;
   showToast(`Audit report downloaded (${ext.toUpperCase()})`);
-  announce(`Audit report downloaded as ${ext.toUpperCase()}. FNV-1a fingerprint ${report.fingerprint.fnv1a32}.`);
+  announce(`Audit report downloaded as ${ext.toUpperCase()}. FNV-1a JSON payload identifier ${report.fingerprint.fnv1a32}.`);
 }
 
 function announceSummary() {

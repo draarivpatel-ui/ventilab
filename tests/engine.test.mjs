@@ -12,9 +12,9 @@ test('1. RK4 CO2 matches closed form with RMSE far below 0.05 percent', () => {
   assert.ok(result.co2RmsePpm < 0.01, `CO2 RMSE ${result.co2RmsePpm} ppm`);
 });
 
-test('2. exponential approach reaches 63.2 percent after one time constant', () => {
+test('2. exponential approach reaches exactly 1 - exp(-1) after one time constant', () => {
   const v = E.verifyAnalytics(base);
-  assert.ok(Math.abs(v.approachFraction - 0.632) < 0.01, `approach ${v.approachFraction}`);
+  assert.ok(Math.abs(v.approachFraction - (1 - Math.exp(-1))) < 1e-9, `approach ${v.approachFraction}`);
   const vent = E.ventilationRates(base);
   const qExchange = vent.qNatural + base.mechOA + vent.qInfiltration;
   assert.ok(Math.abs(v.timeConstantHours - 210 / qExchange) < 1e-9);
@@ -609,13 +609,16 @@ test('62. extreme classroom stays finite and nonnegative', () => {
   assert.ok(run.metrics.riskFinal <= 100);
 });
 
-test('63. equivalent clean airflow includes every exchange and removal term', () => {
+test('63. equivalent clean airflow is outdoor exchange plus recirculating cleaning, once', () => {
   const p = { crBoxes: 1, hepaUnits: 1, merv13: true, uvgi: true, mechOA: 200, volume: 210 };
   const vent = E.ventilationRates(p);
   const equip = E.equipment(p);
   const m = E.simulate(p).metrics;
-  const expected = vent.qNatural + 200 + vent.qInfiltration + equip.quantaCADR + 200 * equip.oaFilterEfficiency;
-  assert.ok(Math.abs(m.ecaTotal - expected) < 1e-9);
+  // The intake filter is not added on top of full exchange credit: its 55%
+  // efficiency only screens incoming outdoor particles in the PM source term.
+  const expected = vent.qNatural + 200 + vent.qInfiltration + equip.quantaCADR;
+  assert.equal(m.ecaTotal, expected);
+  assert.equal(m.ecaTotal, E.infectionCleanAirM3h(p, vent, equip));
   assert.ok(Math.abs(m.ecaACH - m.ecaTotal / 210) < 1e-9);
   assert.ok(m.ecaTotal >= vent.qNatural + 200 + vent.qInfiltration);
 });
@@ -702,10 +705,12 @@ test('71. full 700-option Pareto recomputation stays under 50 ms and determinist
   assert.deepEqual(a.affordable.map((f) => f.label), b.affordable.map((f) => f.label));
 });
 
-test('72. clean-air accounting decomposes exactly into outdoor, device and credit terms', () => {
+test('72. clean-air accounting decomposes exactly into outdoor exchange plus recirculating cleaning', () => {
   const opt = E.optimizeRetrofits(E.getPreset('standard28').params);
   for (const s of opt.all) {
-    assert.ok(Math.abs(s.ecaTotal - (s.airExchange + s.quantaCADR + s.oaFilterCredit)) < 1e-6, s.label);
+    assert.ok(Math.abs(s.ecaTotal - (s.airExchange + s.quantaCADR)) < 1e-6, s.label);
+    // The intake-filter credit is reported for PM ingress only; it never adds
+    // infection-control clean air on top of the full exchange term.
     assert.ok(s.oaFilterCredit >= 0 && s.airExchange >= 0 && s.quantaCADR >= 0, s.label);
   }
 });
