@@ -5,6 +5,11 @@
  */
 import * as E from './engine.js';
 import * as V from './viz.js';
+import * as R from './retrofit.js';
+import * as D from './schoolday.js';
+import * as B from './brief.js';
+import * as C from './roomcodec.js';
+import * as T from './selftest.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, digits = 0) => Number.isFinite(n)
@@ -42,6 +47,7 @@ const state = {
   masks: false,
   infectious: 1,
   budget: 1200,
+  retrofitId: 'school-package',
 };
 
 let evaluated = null;
@@ -49,6 +55,9 @@ let optimization = null;
 let verification = null;
 let convergence = null;
 let sensitivity = null;
+let comparison = null;
+let dayReport = null;
+let dayHoverIndex = null;
 let selectedIntervention = -1;
 let frontierCursor = -1;
 let hoverIndex = null;
@@ -335,6 +344,172 @@ function renderSensitivity() {
   $('sensTableWrap').innerHTML = `<table><thead><tr><th>Input</th><th>Perturbed range</th><th>Baseline (${E.escapeHtml(output.unit)})</th><th>-${pct}% effect</th><th>+${pct}% effect</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function verdictChip(v) {
+  const cls = v.eachOk && v.co2Ok ? 'verdict-pass' : v.eachOk || v.co2Ok ? 'verdict-partial' : 'verdict-fail';
+  return `<span class="verdict-chip ${cls}">${E.escapeHtml(v.label)}</span>`;
+}
+
+function renderRetrofit() {
+  const rows = [...comparison.rows, ...(comparison.best ? [comparison.best] : [])];
+  const fmtMin = (v) => (Number.isFinite(v) ? fmt(v) : 'no decay');
+  const fmtSs = (v) => (Number.isFinite(v) ? fmt(v) : 'no steady state');
+  const fmtPer = (v) => (Number.isFinite(v) ? `${fmt(v, 1)}%` : v > 0 ? 'free gain' : 'n/a');
+  const body = rows.map((row) => {
+    const active = state.retrofitId === row.id || (row.id === 'best-under-budget' && state.retrofitId === 'best-under-budget');
+    return `<tr data-id="${E.escapeHtml(row.id)}"${row.isBaseline ? ' class="is-baseline"' : ''}${active ? ' class="is-active"' : ''}>
+      <td><span class="retrofit-scenario">${E.escapeHtml(row.name)}</span><span class="retrofit-note">${E.escapeHtml(row.note)}</span></td>
+      <td>${fmt(row.ecaACH, 1)}</td>
+      <td>${fmtSs(row.steadyStateCo2)}</td>
+      <td>${fmt(row.co2Peak)}</td>
+      <td>${fmt(row.riskReduction, 1)}%</td>
+      <td>${fmtMin(row.pmClearance90Min)}</td>
+      <td>${verdictChip(row.verdict)}</td>
+      <td>$${fmt(row.annualCost)}</td>
+      <td>${fmtPer(row.riskPer100)}</td>
+      <td><span class="retrofit-actions">
+        <button type="button" class="mini-btn" data-apply="${E.escapeHtml(row.id)}"${row.id === 'custom' ? ' disabled' : ''}>Apply</button>
+        <button type="button" class="mini-btn${active ? ' is-active' : ''}" data-day="${E.escapeHtml(row.id)}">Day chart</button>
+      </span></td>
+    </tr>`;
+  }).join('');
+  $('retrofitTable').innerHTML = `<thead><tr>
+    <th>Scenario</th><th>eACH</th><th>Steady CO2</th><th>Peak CO2</th><th>Risk cut</th><th>PM 90% clear</th><th>Verdict</th><th>USD/yr</th><th>Risk cut per $100</th><th></th>
+  </tr></thead><tbody>${body}</tbody>`;
+  const passing = rows.filter((row) => row.verdict.eachOk && row.verdict.co2Ok).length;
+  $('retrofitChip').textContent = `${passing}/${rows.length} meet both guides`;
+  $('retrofitChip').className = `status-chip ${passing ? 'chip-good' : 'chip-warn'}`;
+  $('retrofitCaption').textContent =
+    `Closed-form metrics on the same classroom: effective air changes (CDC guide >=5), full-occupancy steady-state and peak CO2 (<800 ppm guide), Wells-Riley risk cut vs the as-is baseline, 90% clearance of an indoor PM2.5 pulse, and disclosed annualized planning estimates ($${comparison.costModel.electricityPricePerKwh}/kWh over ${comparison.costModel.occupiedHoursPerYear} occupied hours). Costs are rough single-number estimates for comparison, not quotes.`;
+}
+
+function renderSchoolDay() {
+  const resolved = state.retrofitId === 'best-under-budget' && comparison && comparison.best
+    ? comparison.best.params
+    : state.retrofitId;
+  dayReport = D.schoolDayReport(physicsParams(), resolved);
+  $('schoolDayHost').innerHTML = D.schoolDaySvg(dayReport);
+  const ex = dayReport.exceedance;
+  const stat = (label, before, after, better) =>
+    `<span class="day-stat${better ? ' is-good' : ''}">${label} <strong>${fmt(before)}</strong> before, <strong>${fmt(after)}</strong> after</span>`;
+  $('dayStats').innerHTML = [
+    stat('Min above 800 ppm', ex.before.minutes[800], ex.after.minutes[800], ex.after.minutes[800] < ex.before.minutes[800]),
+    stat('Min above 1000 ppm', ex.before.minutes[1000], ex.after.minutes[1000], ex.after.minutes[1000] < ex.before.minutes[1000]),
+    stat('Day peak (ppm)', ex.before.peak, ex.after.peak, ex.after.peak < ex.before.peak),
+    stat('eACH', dayReport.metrics.before.ecaACH, dayReport.metrics.after.ecaACH, dayReport.metrics.after.ecaACH > dayReport.metrics.before.ecaACH),
+  ].join('');
+  const scenarioName = state.retrofitId === 'best-under-budget' && comparison.best
+    ? 'the budget-optimizer pick'
+    : (R.getRetrofitScenario(state.retrofitId) || { name: 'the current controls' }).name;
+  $('dayCaption').textContent =
+    `Solid curves show ${scenarioName} against the dashed as-is baseline across the 8:00 AM to 3:30 PM day. Exact minutes above each CO2 guide come from the closed-form trajectory, and grey bands are recess, lunch and passing time.`;
+  const sel = $('dayRetrofit');
+  if (sel && sel.value !== state.retrofitId) sel.value = state.retrofitId;
+}
+
+function populateDaySelect() {
+  const opts = [
+    ['custom', 'Custom (current controls)'],
+    ...R.RETROFIT_SCENARIOS.filter((s) => !s.isBaseline).map((s) => [s.id, s.name]),
+    ['baseline', 'As-is baseline (same as before)'],
+    ['best-under-budget', 'Best under current budget'],
+  ];
+  $('dayRetrofit').innerHTML = opts.map(([id, name]) => `<option value="${E.escapeHtml(id)}">${E.escapeHtml(name)}</option>`).join('');
+  $('dayRetrofit').value = state.retrofitId;
+}
+
+function applyRetrofitRow(id) {
+  if (id === 'custom') return;
+  if (id === 'baseline') {
+    state.windowMode = 'closed';
+    state.windowOpen = 0;
+    state.crBoxes = 0;
+    state.hepaUnits = 0;
+    state.merv13 = false;
+    state.uvgi = false;
+  } else {
+    const resolved = id === 'best-under-budget' && comparison.best
+      ? comparison.best.params
+      : R.resolveRetrofit(physicsParams(), id);
+    state.windowMode = resolved.windowMode;
+    state.windowOpen = resolved.windowOpen;
+    state.crBoxes = resolved.crBoxes;
+    state.hepaUnits = resolved.hepaUnits;
+    state.merv13 = resolved.merv13;
+    state.uvgi = resolved.uvgi;
+  }
+  const name = id === 'best-under-budget' ? 'budget-optimizer pick' : (R.getRetrofitScenario(id) || { name: id }).name;
+  syncControls();
+  recompute();
+  showToast(`Applied: ${name}`);
+  announce(`Applied retrofit ${name}.`);
+}
+
+function buildBrief() {
+  return B.signBrief(B.engineeringBrief(physicsParams()));
+}
+
+async function exportBrief(kind) {
+  const brief = buildBrief();
+  const text = kind === 'csv'
+    ? B.briefCsv(brief)
+    : kind === 'md' ? B.briefMarkdown(brief) : `${JSON.stringify(brief, null, 2)}\n`;
+  const mime = kind === 'csv' ? 'text/csv' : kind === 'md' ? 'text/markdown' : 'application/json';
+  const anchor = document.createElement('a');
+  anchor.href = URL.createObjectURL(new Blob([text], { type: mime }));
+  anchor.download = `ventilab-brief-${brief.signature.fnv1a32}.${kind === 'md' ? 'md' : kind}`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(anchor.href), 5000);
+  $('briefSignature').textContent = `signature fnv1a32 ${brief.signature.fnv1a32} | sha256 ${brief.signature.sha256}`;
+  showToast(`Engineering brief downloaded (${kind.toUpperCase()})`);
+  announce(`Engineering brief downloaded. SHA-256 ${brief.signature.sha256.slice(0, 16)}.`);
+}
+
+function verifyBriefFlow() {
+  const raw = $('briefPaste').value.trim();
+  let brief;
+  if (raw) {
+    try {
+      brief = JSON.parse(raw);
+    } catch {
+      $('briefVerifyOut').textContent = 'The pasted text is not valid JSON.';
+      announce('Verification failed: pasted text is not JSON.');
+      return;
+    }
+  } else {
+    brief = buildBrief();
+    $('briefSignature').textContent = `signature fnv1a32 ${brief.signature.fnv1a32} | sha256 ${brief.signature.sha256}`;
+  }
+  const verdict = B.verifyBrief(brief);
+  const replay = verdict.ok ? B.replayBrief(brief) : null;
+  const lines = [verdict.detail];
+  if (replay) lines.push(replay.detail);
+  $('briefVerifyOut').textContent = lines.join(' ');
+  $('briefVerifyOut').style.color = verdict.ok ? 'var(--good-ink)' : '#8f1f1f';
+  announce(lines.join(' '));
+}
+
+function tamperTestFlow() {
+  const brief = buildBrief();
+  const tampered = JSON.parse(JSON.stringify(brief));
+  tampered.metrics.co2Peak += 1;
+  const intact = B.verifyBrief(brief);
+  const broken = B.verifyBrief(tampered);
+  $('briefVerifyOut').style.color = !broken.ok && intact.ok ? 'var(--good-ink)' : '#8f1f1f';
+  $('briefVerifyOut').textContent = intact.ok && !broken.ok
+    ? `Tamper test passed: a +1 ppm edit to the signed copy was rejected. Intact brief verifies (${intact.detail}); altered copy fails (${broken.detail}).`
+    : `Tamper test inconclusive: intact ${intact.ok}, altered ${broken.ok}.`;
+  announce($('briefVerifyOut').textContent);
+}
+
+function runSelfTests() {
+  const st = T.selfTestSuite();
+  $('selfTestList').innerHTML = st.results.map((r) =>
+    `<li><span class="selftest-mark ${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'}</span><span><span class="selftest-name">${E.escapeHtml(r.name)}</span> <span class="selftest-detail">${E.escapeHtml(r.detail)}</span></span></li>`,
+  ).join('');
+  $('selfTestCount').textContent = `${st.passed}/${st.total} checks pass`;
+  announce(`Self-tests finished: ${st.passed} of ${st.total} pass.`);
+}
+
 async function exportReport(kind) {
   if (!evaluated) return;
   const report = E.auditReport(physicsParams());
@@ -397,6 +572,7 @@ function computeAll() {
   verification = E.verifyAnalytics(params);
   convergence = E.convergenceCheck(params);
   sensitivity = E.sensitivityAnalysis(params);
+  comparison = R.retrofitComparison(params);
   if (selectedIntervention >= optimization.affordable.length) selectedIntervention = -1;
   if (frontierCursor >= optimization.frontier.length) frontierCursor = -1;
   renderMetrics();
@@ -405,6 +581,8 @@ function computeAll() {
   renderCharts();
   renderActionCard();
   renderSensitivity();
+  renderRetrofit();
+  renderSchoolDay();
 }
 
 /**
@@ -465,10 +643,12 @@ function renderExperiments() {
 }
 
 function readHash() {
-  const result = E.decodeShare(window.location.hash || '');
+  let result = E.decodeShare(window.location.hash || '');
+  if (!result.ok && window.location.hash) result = C.decodeRoom(window.location.hash);
   if (result.ok) {
     Object.assign(state, result.state);
     state.masks = false;
+    if (result.state.retrofitId) state.retrofitId = result.state.retrofitId;
     frontierCursor = -1;
     syncControls();
     recompute();
@@ -523,6 +703,40 @@ function bindControls() {
     }
     history.replaceState(null, '', hash);
   });
+  $('roomBtn').addEventListener('click', async () => {
+    const hash = C.encodeRoom({ ...state, presetId: state.presetId, retrofitId: state.retrofitId });
+    const url = `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Room bookmark copied to clipboard');
+    } catch {
+      showToast('Room bookmark generated in the address bar');
+    }
+    history.replaceState(null, '', hash);
+  });
+  $('retrofitTable').addEventListener('click', (event) => {
+    const day = event.target.closest('[data-day]');
+    if (day) {
+      state.retrofitId = day.dataset.day;
+      renderRetrofit();
+      renderSchoolDay();
+      announce(`Day chart now shows ${(R.getRetrofitScenario(state.retrofitId) || { name: 'the selected option' }).name}.`);
+      return;
+    }
+    const apply = event.target.closest('[data-apply]');
+    if (apply && !apply.disabled) applyRetrofitRow(apply.dataset.apply);
+  });
+  $('dayRetrofit').addEventListener('change', (event) => {
+    state.retrofitId = event.target.value;
+    renderRetrofit();
+    renderSchoolDay();
+  });
+  $('briefJson').addEventListener('click', () => exportBrief('json'));
+  $('briefCsv').addEventListener('click', () => exportBrief('csv'));
+  $('briefMd').addEventListener('click', () => exportBrief('md'));
+  $('briefVerifyBtn').addEventListener('click', verifyBriefFlow);
+  $('briefTamperBtn').addEventListener('click', tamperTestFlow);
+  $('selfTestBtn').addEventListener('click', runSelfTests);
   $('printBtn').addEventListener('click', () => window.print());
   $('inspApply').addEventListener('click', () => {
     if (selectedIntervention >= 0) applyIntervention(selectedIntervention);
@@ -662,6 +876,103 @@ function bindControls() {
     renderPareto();
   });
 
+  // School-day chart: pointer hover and arrow keys inspect each sampled
+  // minute of the 8:00 AM to 3:30 PM curves.
+  const dayHost = $('schoolDayHost');
+  const dayTooltip = $('dayTooltip');
+  const dayIndexAt = (event) => {
+    if (!dayReport || !dayReport.after.times.length) return null;
+    const svg = dayHost.querySelector('svg');
+    if (!svg) return null;
+    const rect = dayHost.getBoundingClientRect();
+    const scale = rect.width / 1000;
+    const px = event.clientX - rect.left;
+    const plotL = 56 * scale;
+    const plotW = (1000 - 56 - 64) * scale;
+    if (px < plotL - 8 || px > plotL + plotW + 8) return null;
+    const t = Math.max(0, Math.min(450, ((px - plotL) / plotW) * 450));
+    let best = 0;
+    let bestDist = Infinity;
+    dayReport.after.times.forEach((time, i) => {
+      const d = Math.abs(time - t);
+      if (d < bestDist) { bestDist = d; best = i; }
+    });
+    return best;
+  };
+  const dayGuide = (i) => {
+    const svg = dayHost.querySelector('svg');
+    if (!svg || i === null) return;
+    let line = svg.querySelector('#dayGuideLine');
+    if (!line) {
+      line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('id', 'dayGuideLine');
+      line.setAttribute('stroke', 'rgba(64,85,77,0.55)');
+      line.setAttribute('stroke-dasharray', '4,4');
+      svg.appendChild(line);
+    }
+    const x = 56 + (dayReport.after.times[i] / 450) * (1000 - 56 - 64);
+    line.setAttribute('x1', x.toFixed(1));
+    line.setAttribute('x2', x.toFixed(1));
+    line.setAttribute('y1', '30');
+    line.setAttribute('y2', (30 + 380 - 76).toFixed(1));
+  };
+  const dayReadout = (i) => {
+    if (i === null) return null;
+    const t = dayReport.after.times[i];
+    return {
+      time: t,
+      clock: D.schoolDayClock(t),
+      co2Before: dayReport.before.co2[i],
+      co2After: dayReport.after.co2[i],
+      aerBefore: dayReport.before.quanta[i],
+      aerAfter: dayReport.after.quanta[i],
+    };
+  };
+  dayHost.addEventListener('pointermove', (event) => {
+    dayHoverIndex = dayIndexAt(event);
+    if (dayHoverIndex === null) { dayTooltip.hidden = true; return; }
+    const r = dayReadout(dayHoverIndex);
+    dayTooltip.innerHTML = `<strong>${E.escapeHtml(r.clock)} (${fmt(r.time)} min)</strong>
+      <div class="tt-row"><span>CO2 before</span><span>${fmt(r.co2Before)} ppm</span></div>
+      <div class="tt-row"><span>CO2 after</span><span>${fmt(r.co2After)} ppm</span></div>
+      <div class="tt-row"><span>Aerosol before</span><span>${r.aerBefore.toExponential(2)} q/m3</span></div>
+      <div class="tt-row"><span>Aerosol after</span><span>${r.aerAfter.toExponential(2)} q/m3</span></div>`;
+    const rect = dayHost.getBoundingClientRect();
+    dayTooltip.style.left = `${Math.min(Math.max(4, event.clientX - rect.left + 12), rect.width - 210)}px`;
+    dayTooltip.style.top = `${Math.max(4, event.clientY - rect.top - 20)}px`;
+    dayTooltip.hidden = false;
+    dayGuide(dayHoverIndex);
+  });
+  dayHost.addEventListener('pointerleave', () => {
+    dayHoverIndex = null;
+    dayTooltip.hidden = true;
+    const line = dayHost.querySelector('#dayGuideLine');
+    if (line) line.remove();
+  });
+  dayHost.addEventListener('keydown', (event) => {
+    if (!dayReport) return;
+    const count = dayReport.after.times.length;
+    const step = event.shiftKey ? 15 : 1;
+    let handled = true;
+    if (event.key === 'ArrowRight') dayHoverIndex = dayHoverIndex === null ? 0 : Math.min(count - 1, dayHoverIndex + step);
+    else if (event.key === 'ArrowLeft') dayHoverIndex = dayHoverIndex === null ? 0 : Math.max(0, dayHoverIndex - step);
+    else if (event.key === 'Home') dayHoverIndex = 0;
+    else if (event.key === 'End') dayHoverIndex = count - 1;
+    else if (event.key === 'Escape') dayHoverIndex = null;
+    else handled = false;
+    if (!handled) return;
+    event.preventDefault();
+    if (dayHoverIndex === null) {
+      announce('Day chart cursor cleared.');
+      const line = dayHost.querySelector('#dayGuideLine');
+      if (line) line.remove();
+      return;
+    }
+    const r = dayReadout(dayHoverIndex);
+    dayGuide(dayHoverIndex);
+    announce(`${r.clock}. CO2 ${fmt(r.co2Before)} before, ${fmt(r.co2After)} after ppm.`);
+  });
+
   // One delegated change listener announces committed control edits (slider
   // release, radio, checkbox, select) instead of every pointer move.
   document.querySelector('.controls-panel').addEventListener('change', (event) => {
@@ -691,6 +1002,7 @@ function bindControls() {
 }
 
 renderExperiments();
+populateDaySelect();
 syncControls();
 bindControls();
 recompute();
@@ -704,6 +1016,17 @@ window.VentiLab = {
   get convergence() { return convergence; },
   get optimization() { return optimization; },
   get sensitivity() { return sensitivity; },
+  get comparison() { return comparison; },
+  get dayReport() { return dayReport; },
   auditReport: () => E.auditReport(physicsParams()),
+  engineeringBrief: () => B.engineeringBrief(physicsParams()),
+  signBrief: buildBrief,
+  verifyBrief: B.verifyBrief,
+  replayBrief: B.replayBrief,
+  briefCsv: B.briefCsv,
+  briefMarkdown: B.briefMarkdown,
+  selfTestSuite: T.selfTestSuite,
+  encodeRoom: C.encodeRoom,
+  decodeRoom: C.decodeRoom,
   recompute,
 };

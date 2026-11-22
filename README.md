@@ -48,6 +48,37 @@ server, or load it from disk in a browser that permits local ES modules.
   carries every effective input (schedule, start values, solver steps and
   model version), so feeding it back into the report replays the exact same
   peaks, means and fingerprint.
+- Compares a **multi-scenario IAQ retrofit comparator**: the as-is baseline
+  versus five deterministic interventions (two Corsi-Rosenthal fan boxes, a
+  MERV-13 filter upgrade, two commercial HEPA 400-CFM units, a cross-ventilation
+  window schedule, and a combined low-cost school package), the live custom
+  controls, and the optimizer's best pick under the current budget. Each row
+  shows effective ACH, steady-state and peak CO2, Wells-Riley risk reduction,
+  PM2.5 90% clearance time, a CDC/ASHRAE-style compliance verdict, a disclosed
+  annualized cost estimate and risk reduction per $100.
+- Simulates a **full school day (8:00 AM - 3:30 PM)**: periods, recess, lunch,
+  passing and dismissal as a piecewise-constant occupancy schedule, drawn as a
+  before/after CO2 and aerosol chart with grey unoccupied bands and shaded
+  regions where CO2 exceeds 800 or 1000 ppm. Exact minutes above each guide
+  come from the closed-form trajectory, not sampling.
+- Exports a **signed engineering brief** (JSON, formula-safe CSV or Markdown)
+  carrying the scenario, closed-form metrics, compliance verdict, comparator
+  table, school-day summary and solver verification, fingerprinted with
+  FNV-1a-32 and a pure-JS FIPS 180-4 SHA-256 digest over the canonical payload.
+  The signature is tamper evidence, not a digital signature: the in-page
+  verifier recomputes it and replays the recorded scenario through the solver
+  to confirm every recorded metric, and a tamper-test button demonstrates
+  detection of an edited copy.
+- Bookmarks rooms through a second URL-hash format, `#room=...`, a
+  base64url-JSON bookmark that also carries the selected comparator retrofit.
+  Decoding is strict: size and charset limits, a version gate, allowlisted
+  keys only, and per-field type, integer and range checks; a malformed
+  bookmark is rejected without touching the current scenario.
+- Runs an in-page **self-test panel** that live-checks the SHA-256 FIPS 180-4
+  known answers, CO2 mass-balance convergence, Wells-Riley bounds and ACH
+  monotonicity, PM2.5 decay conservation, multi-period schedule conservation,
+  CSV formula-injection escaping, brief tamper detection, the bookmark codec,
+  comparator consistency and canonical-JSON determinism.
 - Supports full keyboard operation. Arrow keys inspect the trend chart and
   walk the Pareto frontier, Enter applies a point, and a polite live region
   announces every committed change. Out-of-range inputs are clamped and
@@ -73,7 +104,7 @@ classroom:
 
 | Check | Observed |
 |---|---|
-| Tests | **148 passed, 0 failed** |
+| Tests | **443 passed, 0 failed** |
 | CO2 RK4 vs closed form RMSE | **2.38e-8 %** (5.09e-7 ppm), target < 0.05 % |
 | PM2.5 RMSE vs closed form | **4.80e-10 ug/m3** |
 | Integrated quanta RMSE | **1.01e-12** |
@@ -85,6 +116,9 @@ classroom:
 | Retrofit enumeration | **700 options, 259 affordable, 246 Pareto-optimal** (661 over all configs, 9 on the cost-risk frontier) |
 | Retrofit optimizer latency | **10.8 ms median** (max 18.8 ms over 10 runs) |
 | Wildfire preset indoor PM2.5 mean | **149.47 ug/m3** with outdoor 180 ug/m3 |
+| School-day minutes above 800 ppm (standard room) | **439.5 min before, 272.9 min after** the low-cost school package |
+| School-day minutes above 1000 ppm | **432.9 min before, 0.0 min after** |
+| In-page self-tests | **10/10 pass** |
 
 Preset peaks (closed baseline unless the preset specifies ventilation):
 
@@ -98,17 +132,37 @@ Preset peaks (closed baseline unless the preset specifies ventilation):
 
 ## Browser verification
 
-The demo choreography in `video/steps.json` was replayed in isolated headless
-Chrome against the rebuilt UI at 1920x1080 and again at 1440x900:
+A 39-check audit ran the live UI in real headless Chrome at 1440x900 and
+390x844 (zero-dependency CDP harness):
+
+- **Zero console errors, zero uncaught exceptions, zero page-level errors and
+  zero external network requests**; no horizontal overflow at either size
+  (`document.documentElement.scrollWidth === innerWidth`).
+- The preset select re-solves; the comparator renders all 8 rows and a real
+  `Input.dispatchMouseEvent` click on a row's Apply button writes the override
+  into live state (CR boxes 0 -> 2).
+- The school-day chart renders its SVG with both guide bands, reports
+  before/after threshold minutes, switches the after-curve on the retrofit
+  select, and arrow keys drive the keyboard cursor and guide line.
+- Run Self-Tests fills the panel with 10/10 passes on a real pointer click;
+  the signed brief verifies intact, replays all 14 recorded metrics and the
+  tamper test rejects an edited copy; the JSON export triggers a real
+  `ventilab-brief-<fnv>.json` download and the signature line shows the
+  SHA-256 digest.
+- Room bookmark writes a `#room=...` hash; reloading through it restores
+  `crBoxes: 2` and the `cross-vent` day selection, and a malformed
+  `#room=AAAA` is rejected with the current scenario preserved.
+- Mobile at 390x844 keeps the comparator, school-day chart and self-test
+  panel reachable with 10/10 self-tests on a real click.
+
+Earlier, the demo choreography in `video/steps.json` was replayed in isolated
+headless Chrome against the rebuilt UI at 1920x1080 and again at 1440x900:
 
 - Every selector step hit-tested via `document.elementFromPoint`; all click
   targets received real `Input.dispatchMouseEvent` clicks and produced the
   expected state changes (radio, checkbox, intervention select, table toggle).
 - A guided experiment button applied its preset plus overrides; a real pointer
   click on a Pareto frontier point populated the inspector panel.
-- **Zero console errors** and **zero external requests**.
-- No horizontal scroll at 1920x1080, 1440x900 or 390x844
-  (`document.documentElement.scrollWidth === innerWidth`).
 - Trend, classroom and Pareto canvas regions were captured and inspected at
   1440px and 390px: guide captions keep their line order, end-point labels
   keep 11px vertical separation with leader ticks when detached, and no
@@ -132,12 +186,20 @@ decisions.
 | Path | Purpose |
 |---|---|
 | `src/engine.js` | Pure ES module physics engine, optimizer, experiments, share codec, sensitivity analyzer and audit export |
+| `src/retrofit.js` | Multi-scenario retrofit comparator, disclosed annualized cost model, PM2.5 clearance and compliance verdicts |
+| `src/schoolday.js` | 8:00 AM - 3:30 PM schedule integrator, exact CO2 threshold exceedance and the before/after SVG chart |
+| `src/brief.js` | Signed engineering brief (JSON/CSV/Markdown), integrity verification and solver replay |
+| `src/roomcodec.js` | Strict `#room=` base64url bookmark codec |
+| `src/selftest.js` | In-page self-test suite |
+| `src/sha256.js` | Dependency-free FIPS 180-4 SHA-256 |
 | `src/app.js` | Controls, state, inspector, experiments, keyboard access and DOM wiring |
 | `src/viz.js` | Canvas classroom diagram, trend chart, Pareto chart and tornado chart |
 | `index.html`, `styles.css` | Offline UI |
 | `tests/engine.test.mjs` | 75 deterministic unit tests |
 | `tests/wave3.test.mjs` | 63 sensitivity, export and conservation-invariant tests |
-| `tests/wave-b.test.mjs` | 10 regression tests for clean-air accounting, exact means, verification and export fixes |
+| `tests/wave-b.test.mjs` | 18 regression tests for clean-air accounting, exact means, verification and export fixes |
+| `tests/wave-d.test.mjs` | 88 comparator and school-day tests |
+| `tests/wave-e.test.mjs` | 199 SHA-256, brief, bookmark codec, self-test and integration tests |
 | `video/narration.txt`, `video/steps.json` | Demo script and choreography |
 
 ## License

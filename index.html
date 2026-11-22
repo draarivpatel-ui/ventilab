@@ -29,6 +29,7 @@
     <div class="topbar-meta">
       <span class="pill"><span class="dot" aria-hidden="true"></span>100% offline</span>
       <span class="pill pill-quiet">Reference classroom models</span>
+      <button type="button" class="btn btn-ghost" id="roomBtn" aria-label="Copy room bookmark link">Room bookmark</button>
       <button type="button" class="btn btn-ghost" id="shareBtn" aria-label="Copy shareable scenario link">Share scenario</button>
     </div>
   </header>
@@ -172,6 +173,36 @@
           <div id="dataTable" class="table-wrap" hidden></div>
         </section>
 
+        <section class="panel retrofit-panel" aria-labelledby="retrofitTitle">
+          <div class="panel-head">
+            <h2 id="retrofitTitle">Retrofit comparator</h2>
+            <span class="status-chip chip-good" id="retrofitChip" role="status"></span>
+          </div>
+          <div class="table-wrap retrofit-wrap">
+            <table id="retrofitTable" class="retrofit-table" aria-label="Comparison of retrofit interventions"></table>
+          </div>
+          <p class="viz-caption" id="retrofitCaption"></p>
+        </section>
+
+        <section class="panel schoolday-panel" aria-labelledby="schoolDayTitle">
+          <div class="panel-head">
+            <h2 id="schoolDayTitle">School day</h2>
+            <div class="chart-actions">
+              <span class="legend-inline"><i class="swatch swatch-co2" aria-hidden="true"></i>CO2 <i class="swatch swatch-particle" aria-hidden="true"></i>Aerosol <i class="swatch swatch-ghost" aria-hidden="true"></i>Before retrofit</span>
+              <label class="field day-select" for="dayRetrofit"><span class="sr-only">Retrofit shown on the after curve</span>
+                <select id="dayRetrofit" class="select"></select>
+              </label>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <div id="schoolDayHost" class="day-host" tabindex="0" role="img" aria-label="Interactive school-day chart. Focus and use arrow keys to step through the day."></div>
+            <div class="chart-tooltip" id="dayTooltip" role="tooltip" hidden></div>
+          </div>
+          <p class="chart-hint">Focus the chart and use arrow keys to step through the day. Amber and red ticks on the top rail mark exact minutes above 800 and 1000 ppm.</p>
+          <div class="day-stats" id="dayStats" aria-live="polite"></div>
+          <p class="viz-caption" id="dayCaption"></p>
+        </section>
+
         <section class="panel viz-panel" aria-labelledby="paretoTitle">
           <div class="panel-head">
             <h2 id="paretoTitle">Retrofit frontier</h2>
@@ -231,6 +262,38 @@
           <p class="formula-line">dC/dt = (n G)/V - (Q/V)(C - C&#8320;&#8320;) &nbsp;|&nbsp; P = 1 - exp(-I q p &#8747;c(t)dt)</p>
         </section>
 
+        <section class="panel brief-panel" aria-labelledby="briefTitle">
+          <div class="panel-head">
+            <h2 id="briefTitle">Signed engineering brief</h2>
+            <span class="status-chip chip-good" id="briefChip" role="status">SHA-256</span>
+          </div>
+          <p class="verify-intro">One deterministic download holds the scenario, solved metrics, the retrofit comparison, the school-day summary and the solver verification numbers, signed with a pure-JavaScript SHA-256 integrity digest. The digest is tamper evidence, not a digital signature: anyone can recompute it, so any later edit is caught by the check below.</p>
+          <div class="export-row">
+            <button type="button" class="btn btn-ghost" id="briefJson">Download JSON brief</button>
+            <button type="button" class="btn btn-ghost" id="briefCsv">Download CSV brief</button>
+            <button type="button" class="btn btn-ghost" id="briefMd">Download Markdown brief</button>
+          </div>
+          <p class="hash-line" id="briefSignature">The brief signature appears here after a download or a verification run.</p>
+          <div class="brief-verify">
+            <label class="field" for="briefPaste">
+              <span class="field-label">Verify a pasted brief</span>
+              <textarea id="briefPaste" rows="3" spellcheck="false" placeholder="Paste a VentiLab brief JSON here, or leave empty to verify the current classroom"></textarea>
+            </label>
+            <div class="verify-actions">
+              <button type="button" class="btn btn-primary" id="briefVerifyBtn">Verify signature and replay</button>
+              <button type="button" class="btn btn-ghost" id="briefTamperBtn">Tamper-test a copy</button>
+            </div>
+            <p class="viz-caption" id="briefVerifyOut" aria-live="polite"></p>
+          </div>
+          <div class="selftest-block">
+            <div class="selftest-head">
+              <button type="button" class="btn btn-ghost" id="selfTestBtn">Run Self-Tests</button>
+              <span class="viz-caption" id="selfTestCount"></span>
+            </div>
+            <ol class="selftest-list" id="selfTestList"></ol>
+          </div>
+        </section>
+
         <details class="panel assumptions" id="assumptionsPanel">
           <summary>Model assumptions and limits</summary>
           <ul class="assume-list">
@@ -241,6 +304,8 @@
             <li>Wells-Riley risk scales linearly from one integrated unit-source concentration, so masks, infectious count and quanta rate multiply the dose exactly. It is a relative risk teaching tool, not an infection forecast.</li>
             <li>MERV-13 is modeled as 55% particle removal on the incoming mechanical outdoor air stream plus a 4 ACH equivalent recirculation credit and a 40 W fan-energy penalty; it is passive and adds no noise. The intake filter cuts incoming PM2.5 only; it adds no infection-control clean air on top of the outdoor exchange already counted. UVGI adds a 3 ACH equivalent removal. Fan boxes and HEPA units add fixed clean-air delivery rates.</li>
             <li>Noise is the logarithmic sum of independent fan sources (52 dBA per fan box, 49 dBA per HEPA unit). Costs are rough single-number USD estimates for comparison only.</li>
+            <li>Annualized retrofit costs in the comparator are disclosed planning estimates: capital amortized over device life, filter or lamp consumables each year, and fan electricity at $0.16/kWh over 1,350 occupied hours (7.5 h x 180 school days). They are for comparison, not quotes.</li>
+            <li>The engineering brief signature is a SHA-256 integrity digest computed in the page. It proves a file was not edited after export; it is tamper evidence, not a cryptographic signature by an author.</li>
             <li>All scenarios are synthetic reference models. Nothing here is a measurement, a pilot, or a claim about a real building.</li>
           </ul>
         </details>
