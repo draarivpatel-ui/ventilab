@@ -87,6 +87,8 @@ server, or load it from disk in a browser that permits local ES modules.
   Decoding is strict: size and charset limits, a version gate, allowlisted
   keys only, and per-field type, integer and range checks; a malformed
   bookmark is rejected without touching the current scenario.
+- Ships a scoped service worker and web manifest that precache the full shell,
+  so the workbench reloads offline after first load.
 - Runs an in-page **self-test panel** that live-checks the SHA-256 FIPS 180-4
   known answers, CO2 mass-balance convergence, Wells-Riley bounds and ACH
   monotonicity, PM2.5 decay conservation, multi-period schedule conservation,
@@ -117,7 +119,7 @@ classroom:
 
 | Check | Observed |
 |---|---|
-| Tests | **468 passed, 0 failed** |
+| Tests | **475 passed, 0 failed** |
 | CO2 RK4 vs closed form RMSE | **2.38e-8 %** (5.09e-7 ppm), target < 0.05 % |
 | PM2.5 RMSE vs closed form | **4.80e-10 ug/m3** |
 | Integrated quanta RMSE | **1.01e-12** |
@@ -213,13 +215,15 @@ decisions.
 | `src/sha256.js` | Dependency-free FIPS 180-4 SHA-256 |
 | `src/app.js` | Controls, state, inspector, experiments, keyboard access and DOM wiring |
 | `src/viz.js` | Canvas classroom diagram, trend chart, Pareto chart and tornado chart |
-| `index.html`, `styles.css` | Offline UI |
+| `index.html`, `styles.css` | Offline UI with citable metadata and the classroom quick start |
+| `sw.js`, `manifest.webmanifest` | Scoped offline precache and install metadata |
 | `tests/engine.test.mjs` | 75 deterministic unit tests |
 | `tests/wave3.test.mjs` | 63 sensitivity, export and conservation-invariant tests |
 | `tests/wave-b.test.mjs` | 18 regression tests for clean-air accounting, exact means, verification and export fixes |
 | `tests/wave-d.test.mjs` | 88 comparator and school-day tests |
 | `tests/wave-e.test.mjs` | 199 SHA-256, brief, bookmark codec, self-test and integration tests |
 | `tests/plan.test.mjs` | 25 shared-air plan and physics-explainer tests |
+| `tests/release.test.mjs` | 7 metadata, PWA shell, asset, quick-start and text-hygiene tests |
 | `video/narration.txt`, `video/steps.json` | Demo script and choreography |
 
 ## License

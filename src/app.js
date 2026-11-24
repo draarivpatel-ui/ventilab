@@ -51,6 +51,24 @@ const state = {
   retrofitId: 'school-package',
 };
 
+const QUICK_STARTS = Object.freeze({
+  observe: Object.freeze({
+    experimentId: 'winter-spike',
+    targetId: 'trendCanvas',
+    done: 'Winter spike loaded. The live chart is focused; use arrow keys to inspect each minute.',
+  }),
+  compare: Object.freeze({
+    experimentId: 'cr-vs-merv',
+    targetId: 'paretoCanvas',
+    done: 'Retrofit comparison loaded. The frontier is focused; use arrow keys to walk it.',
+  }),
+  plan: Object.freeze({
+    experimentId: null,
+    targetId: 'planPrint',
+    done: 'Shared-air plan ready. The print control is focused.',
+  }),
+});
+
 let evaluated = null;
 let optimization = null;
 let verification = null;
@@ -679,18 +697,30 @@ function applyPreset(id, overrides = {}) {
   recompute();
 }
 
+function setActiveExperiment(id) {
+  for (const button of $('expRow').querySelectorAll('.exp-btn')) {
+    const active = button.dataset.exp === id;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+}
+
+function loadExperiment(exp) {
+  applyPreset(exp.presetId, exp.overrides);
+  setActiveExperiment(exp.id);
+  $('expNote').textContent = exp.watch;
+  showToast(`Experiment loaded: ${exp.name}`);
+  announce(`Experiment loaded: ${exp.name}. ${exp.watch}`);
+}
+
 function renderExperiments() {
   $('expRow').innerHTML = E.EXPERIMENTS.map(
-    (exp) => `<button type="button" class="exp-btn" data-exp="${exp.id}">${E.escapeHtml(exp.name)}</button>`,
+    (exp) => `<button type="button" class="exp-btn" data-exp="${exp.id}" aria-pressed="false">${E.escapeHtml(exp.name)}</button>`,
   ).join('');
   for (const button of $('expRow').querySelectorAll('.exp-btn')) {
     button.addEventListener('click', () => {
       const exp = E.getExperiment(button.dataset.exp);
-      if (!exp) return;
-      applyPreset(exp.presetId, exp.overrides);
-      for (const b of $('expRow').querySelectorAll('.exp-btn')) b.classList.toggle('is-active', b === button);
-      $('expNote').textContent = exp.watch;
-      showToast(`Experiment loaded: ${exp.name}`);
+      if (exp) loadExperiment(exp);
     });
   }
 }
@@ -741,10 +771,10 @@ function bindControls() {
     });
   }
   $('presetSelect').addEventListener('change', (event) => {
-    for (const b of $('expRow').querySelectorAll('.exp-btn')) b.classList.remove('is-active');
+    setActiveExperiment(null);
     applyPreset(event.target.value);
   });
-  $('resetBtn').addEventListener('click', () => applyPreset('standard28'));
+  $('resetBtn').addEventListener('click', () => { setActiveExperiment(null); applyPreset('standard28'); });
   $('shareBtn').addEventListener('click', async () => {
     const hash = E.encodeShare({ ...state, presetId: state.presetId });
     const url = `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`;
@@ -767,6 +797,23 @@ function bindControls() {
     }
     history.replaceState(null, '', hash);
   });
+  for (const button of document.querySelectorAll('[data-quickstart]')) {
+    button.addEventListener('click', () => {
+      const step = QUICK_STARTS[button.dataset.quickstart];
+      if (!step) return;
+      if (step.experimentId) {
+        const exp = E.getExperiment(step.experimentId);
+        if (exp) loadExperiment(exp);
+      }
+      const target = $(step.targetId);
+      if (target) {
+        target.scrollIntoView({ block: 'center', inline: 'nearest' });
+        if (typeof target.focus === 'function') target.focus({ preventScroll: true });
+      }
+      announce(step.done);
+    });
+  }
+
   $('retrofitTable').addEventListener('click', (event) => {
     const day = event.target.closest('[data-day]');
     if (day) {
@@ -1099,6 +1146,12 @@ syncControls();
 bindControls();
 recompute();
 readHash();
+
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {});
+  });
+}
 
 // Small test hook used for coordinate verification only.
 window.VentiLab = {

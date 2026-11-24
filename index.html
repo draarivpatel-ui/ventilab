@@ -6,7 +6,54 @@
   <meta name="color-scheme" content="light">
   <title>VentiLab - Classroom Clean-Air and Airborne Risk Workbench</title>
   <meta name="description" content="An offline classroom air-quality physics workbench: CO2 mass balance, Wells-Riley risk, PM2.5 filtration and retrofit optimization.">
-  <link rel="icon" href="data:,">
+  <meta name="theme-color" content="#f6f8f6">
+  <link rel="canonical" href="https://aariv.me/ventilab/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://aariv.me/ventilab/">
+  <meta property="og:title" content="VentiLab - Classroom Clean-Air and Airborne Risk Workbench">
+  <meta property="og:description" content="Explore classroom CO2, PM2.5, airborne risk and 700 retrofit options with transparent physics that runs offline in the browser.">
+  <meta property="og:image" content="https://aariv.me/ventilab/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="VentiLab classroom air-quality workbench with live CO2, particle and retrofit charts">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="VentiLab - Classroom Clean-Air and Airborne Risk Workbench">
+  <meta name="twitter:description" content="A zero-dependency offline physics workbench for classroom clean-air decisions.">
+  <meta name="twitter:image" content="https://aariv.me/ventilab/og-image.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "VentiLab",
+        "url": "https://aariv.me/ventilab/",
+        "applicationCategory": "EducationalApplication",
+        "operatingSystem": "Any modern web browser",
+        "browserRequirements": "Requires JavaScript and ES modules; runs fully offline after first load",
+        "description": "An offline classroom air-quality physics workbench for CO2 mass balance, Wells-Riley airborne risk, PM2.5 filtration and retrofit optimization.",
+        "inLanguage": "en",
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "license": "https://opensource.org/licenses/MIT",
+        "codeRepository": "https://github.com/draarivpatel-ui/ventilab"
+      },
+      {
+        "@type": "LearningResource",
+        "name": "VentiLab classroom clean-air workbench",
+        "url": "https://aariv.me/ventilab/",
+        "learningResourceType": "interactive simulation",
+        "educationalLevel": "secondary school",
+        "teaches": ["classroom ventilation", "CO2 mass balance", "PM2.5 filtration", "Wells-Riley airborne risk", "retrofit tradeoffs"],
+        "inLanguage": "en",
+        "isAccessibleForFree": true
+      }
+    ]
+  }
+  </script>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -54,6 +101,33 @@
       <h2 id="expTitle" class="exp-title">Guided experiments</h2>
       <div class="exp-row" id="expRow"></div>
       <p class="exp-note" id="expNote">Pick an experiment to load a reference classroom and a suggested reading. Every slider stays editable afterward.</p>
+    </section>
+
+    <section class="panel quickstart" aria-labelledby="quickTitle">
+      <div class="panel-head">
+        <h2 id="quickTitle">Classroom quick start</h2>
+        <span class="status-chip">10 minute lesson</span>
+      </div>
+      <ol class="quick-steps">
+        <li>
+          <button type="button" class="quick-action" data-quickstart="observe">
+            <strong>Observe the spike</strong>
+            <span id="quickObserveText">Load the winter closed-window classroom and land on the live chart as CO2 and risk separate.</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="quick-action" data-quickstart="compare">
+            <strong>Compare the fixes</strong>
+            <span id="quickCompareText">Open the Corsi-Rosenthal vs MERV-13 experiment at the exact retrofit frontier.</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="quick-action" data-quickstart="plan">
+            <strong>Print the plan</strong>
+            <span id="quickPlanText">Jump to the teacher, student and family checklist with the current classroom numbers filled in.</span>
+          </button>
+        </li>
+      </ol>
     </section>
 
     <details class="panel physics-panel" id="physicsPanel">
