@@ -28,13 +28,26 @@ export const PLAN_ROLES = Object.freeze([
   { id: 'families', label: 'Families and community' },
 ]);
 
-function deviceSummary(p) {
+function filterDeviceSummary(p) {
   const parts = [];
   if (p.crBoxes > 0) parts.push(`${p.crBoxes} Corsi-Rosenthal box${p.crBoxes > 1 ? 'es' : ''}`);
   if (p.hepaUnits > 0) parts.push(`${p.hepaUnits} HEPA unit${p.hepaUnits > 1 ? 's' : ''}`);
   if (p.merv13) parts.push('the MERV-13 HVAC upgrade');
-  if (p.uvgi) parts.push('upper-room UVGI');
   return parts;
+}
+
+function deviceGuidanceText(p) {
+  const filters = filterDeviceSummary(p);
+  if (filters.length && p.uvgi) {
+    return `Run ${filters.join(' and ')} and upper-room UVGI through every occupied period. Filters remove particles and aerosols, upper-room UVGI inactivates infectious aerosols, and neither removes CO2.`;
+  }
+  if (filters.length) {
+    return `Run ${filters.join(' and ')} through every occupied period. Filters remove particles and aerosols but never CO2.`;
+  }
+  if (p.uvgi) {
+    return 'Run upper-room UVGI through every occupied period. UVGI inactivates infectious aerosols but does not remove PM2.5 particles or CO2.';
+  }
+  return 'If a portable filter or fan box is available, run it during occupied periods. Filters remove particles and aerosols but never CO2.';
 }
 
 /**
@@ -54,7 +67,6 @@ export function sharedAirPlan(input = {}, metrics = {}, presetName = 'reference 
   const pmMean = Number.isFinite(metrics.pmMean) ? metrics.pmMean : NaN;
   const riskFinal = Number.isFinite(metrics.riskFinal) ? metrics.riskFinal : NaN;
   const steady = steadyStateCo2(p);
-  const devices = deviceSummary(p);
 
   const teacher = [
     { id: 'read', text: `Check outdoor air before first period. The model reads ${fmtNum(p.outdoorPM)} ug/m3 PM2.5 and ${fmtNum(p.outdoorCO2)} ppm CO2 outside right now.` },
@@ -66,9 +78,7 @@ export function sharedAirPlan(input = {}, metrics = {}, presetName = 'reference 
     co2Peak < 800
       ? { id: 'co2', text: `Keep a live CO2 readout visible. The modeled peak is ${fmtNum(co2Peak)} ppm, inside the 800 ppm guide band; keep the current routine and recheck it weekly.` }
       : { id: 'co2', text: `Keep a live CO2 readout visible. The modeled peak is ${fmtNum(co2Peak)} ppm, over the 800 ppm guide band; add outdoor air first and filtration second.` },
-    devices.length
-      ? { id: 'devices', text: `Run ${devices.join(' and ')} through every occupied period. Devices remove particles and aerosols but never CO2.` }
-      : { id: 'devices', text: 'If a portable filter or fan box is available, run it during occupied periods. Devices remove particles and aerosols but never CO2.' },
+    { id: 'devices', text: deviceGuidanceText(p) },
     { id: 'log', text: 'Log the room once a week and re-run this model whenever occupancy, weather or equipment changes.' },
   ];
 
@@ -141,6 +151,12 @@ export function physicsExplainer(input = {}, metrics = {}) {
   const doseFactor = p.infectious * p.quantaRate * (1 - p.maskEfficiency) * p.breathingFlow;
   const doseQuanta = Number.isFinite(dose) ? doseFactor * Math.max(0, dose) : NaN;
   const oaPerPerson = Number.isFinite(metrics.oaPerPersonLps) ? metrics.oaPerPersonLps : 0;
+  const pmIncoming =
+    p.infiltrationFactor * qInfiltration +
+    qNatural +
+    p.mechOA * (1 - equip.oaFilterEfficiency);
+  const pmRemoval = qExchange + equip.pmCADR;
+  const pmSteady = pmRemoval > EPS ? (p.outdoorPM * pmIncoming) / pmRemoval : NaN;
 
   return [
     {
@@ -165,7 +181,7 @@ export function physicsExplainer(input = {}, metrics = {}) {
       formula: 'tau = V / Q',
       substitution: `${fmtNum(p.volume)} / ${fmtNum(qExchange)}`,
       result: Number.isFinite(tau) ? `${fmtNum(tau, 2)} h` : 'no exchange',
-      why: 'The CO2 gap above outdoors closes by 63% every tau, the signature of a first-order system.',
+      why: 'CO2 closes 63% of the gap toward its current constant-occupancy equilibrium every tau (toward outdoors when unoccupied).',
     },
     {
       id: 'steady',
@@ -206,10 +222,12 @@ export function physicsExplainer(input = {}, metrics = {}) {
     {
       id: 'pm',
       name: 'Particle balance',
-      formula: 'dPM/dt = P_in x Q x C_out / V - (Q + CADRpm) x C / V',
-      substitution: `outdoor ${fmtNum(p.outdoorPM)} ug/m3 -> indoor mean ${fmtNum(metrics.pmMean ?? 0, 1)} ug/m3`,
-      result: `${fmtNum(metrics.pmMean ?? 0, 1)} ug/m3 indoor mean`,
-      why: 'Particles ride the same air in, but infiltration only passes 70% and filters pull them back out.',
+      formula: 'PM_ss = C_out x (f_inf x Qinf + Qnat + (1 - eta_OA) x Qmech) / (Q + CADRpm)',
+      substitution: `${fmtNum(p.outdoorPM)} x (${fmtNum(p.infiltrationFactor, 2)} x ${fmtNum(qInfiltration)} + ${fmtNum(qNatural)} + ${fmtNum(1 - equip.oaFilterEfficiency, 2)} x ${fmtNum(p.mechOA)}) / (${fmtNum(qExchange)} + ${fmtNum(equip.pmCADR)})`,
+      result: Number.isFinite(pmSteady)
+        ? `${fmtNum(pmSteady, 1)} ug/m3 steady (mean ${fmtNum(metrics.pmMean ?? 0, 1)})`
+        : 'no PM removal',
+      why: `Infiltration passes ${Math.round(p.infiltrationFactor * 100)}% of outdoor PM2.5, intake filtration passes ${Math.round((1 - equip.oaFilterEfficiency) * 100)}%, and indoor filters pull particles back out (UVGI does not).`,
     },
   ];
 }

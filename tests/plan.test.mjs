@@ -213,3 +213,33 @@ test('22. the OA-per-person row never prints a rate for an empty room', () => {
   const full = P.physicsExplainer(params(), metricsOf(params())).find((r) => r.id === 'oa-person');
   assert.match(full.result, /L\/s/);
 });
+
+test('23. UVGI guidance never claims UVGI removes PM2.5 particles', () => {
+  const uvOnly = itemsOf(planOf({ ...params(), uvgi: true }), 'teacher').find((i) => i.id === 'devices').text;
+  assert.match(uvOnly, /inactivates infectious aerosols/);
+  assert.match(uvOnly, /does not remove PM2\.5 particles/);
+  const both = itemsOf(planOf({ ...params(), crBoxes: 1, uvgi: true }), 'teacher').find((i) => i.id === 'devices').text;
+  assert.match(both, /Filters remove particles and aerosols/);
+  assert.match(both, /upper-room UVGI inactivates infectious aerosols/);
+});
+
+test('24. tau explanation references constant-occupancy equilibrium, not outdoors alone', () => {
+  const row = P.physicsExplainer(params(), metricsOf(params())).find((r) => r.id === 'tau');
+  assert.match(row.why, /equilibrium/);
+  assert.ok(!/gap above outdoors/i.test(row.why));
+});
+
+test('25. PM row matches pmSteadyRatio equilibrium, live infiltrationFactor and zero-removal guard', () => {
+  const p = params();
+  const m = metricsOf(p);
+  const row = P.physicsExplainer(p, m).find((r) => r.id === 'pm');
+  const expectedSteady = E.pmSteadyRatio(p) * p.outdoorPM;
+  assert.match(row.result, new RegExp(`^${P.fmtNum(expectedSteady, 1)} ug/m3 steady`));
+  const zeroInf = P.physicsExplainer({ ...p, infiltrationFactor: 0 }, metricsOf({ ...p, infiltrationFactor: 0 })).find((r) => r.id === 'pm');
+  assert.match(zeroInf.why, /Infiltration passes 0%/);
+  const fullInf = P.physicsExplainer({ ...p, infiltrationFactor: 1 }, metricsOf({ ...p, infiltrationFactor: 1 })).find((r) => r.id === 'pm');
+  assert.match(fullInf.why, /Infiltration passes 100%/);
+  const sealed = { ...p, mechOA: 0, windowMode: 'closed', infiltrationACH: 0, crBoxes: 0, hepaUnits: 0, merv13: false };
+  const sealedRow = P.physicsExplainer(sealed, metricsOf(sealed)).find((r) => r.id === 'pm');
+  assert.equal(sealedRow.result, 'no PM removal');
+});
