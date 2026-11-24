@@ -56,6 +56,12 @@
       <p class="exp-note" id="expNote">Pick an experiment to load a reference classroom and a suggested reading. Every slider stays editable afterward.</p>
     </section>
 
+    <details class="panel physics-panel" id="physicsPanel">
+      <summary id="physicsTitle">How airflow physics works</summary>
+      <div class="physics-list" id="physicsRows"></div>
+      <p class="chart-hint">Every number above is solved live. Move any control and the substitutions update with the classroom.</p>
+    </details>
+
     <section class="workspace" aria-label="Workbench controls and results">
       <aside class="panel controls-panel" aria-labelledby="controlsTitle">
         <div class="panel-head">
@@ -316,6 +322,23 @@
             <button type="button" class="btn btn-primary" id="printBtn">Print card</button>
           </div>
           <div id="actionCard" class="action-card"></div>
+        </section>
+
+        <section class="panel plan-panel" aria-labelledby="planTitle">
+          <div class="panel-head">
+            <h2 id="planTitle">Classroom and community shared-air plan</h2>
+            <div class="chart-actions">
+              <button type="button" class="btn btn-ghost" id="planCopy">Copy plan</button>
+              <button type="button" class="btn btn-primary" id="planPrint">Print plan</button>
+            </div>
+          </div>
+          <p class="plan-summary" id="planSummary"></p>
+          <div class="plan-groups" id="planGroups"></div>
+          <p class="plan-progress" id="planProgress" aria-live="polite"></p>
+          <details class="plan-text-block">
+            <summary>Plan as plain text</summary>
+            <textarea id="planText" class="plan-text" rows="16" readonly spellcheck="false"></textarea>
+          </details>
         </section>
       </div>
     </section>

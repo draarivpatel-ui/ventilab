@@ -10,6 +10,7 @@ import * as D from './schoolday.js';
 import * as B from './brief.js';
 import * as C from './roomcodec.js';
 import * as T from './selftest.js';
+import * as P from './plan.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n, digits = 0) => Number.isFinite(n)
@@ -64,6 +65,7 @@ let hoverIndex = null;
 let hoverPareto = null;
 let toastTimer = null;
 let recovering = false;
+const planDone = new Set();
 
 function showToast(message) {
   const toast = $('toast');
@@ -294,6 +296,55 @@ function renderActionCard() {
     </div>
     <ol class="card-steps">${actions.map((a) => `<li>${E.escapeHtml(a)}</li>`).join('')}</ol>
     <p class="card-foot">Synthetic reference classroom ${E.escapeHtml(E.getPreset(state.presetId).name)}. Educational estimate from a simplified physics model, not a measurement from a real classroom and not ventilation-system design guidance. Generated offline by VentiLab.</p>`;
+}
+
+/**
+ * The physics drawer re-derives every equation card with the live numbers,
+ * so a slider move is visible inside the formula substitution itself.
+ */
+function renderPhysics() {
+  const rows = P.physicsExplainer(physicsParams(), evaluated.metrics);
+  $('physicsRows').innerHTML = rows.map((row) => `
+    <div class="physics-row">
+      <div class="physics-row-head"><span class="physics-name">${E.escapeHtml(row.name)}</span><span class="physics-result">${E.escapeHtml(row.result)}</span></div>
+      <div class="physics-formula">${E.escapeHtml(row.formula)}</div>
+      <div class="physics-sub">${E.escapeHtml(row.substitution)}</div>
+      <div class="physics-why">${E.escapeHtml(row.why)}</div>
+    </div>`).join('');
+}
+
+function currentPlan() {
+  return P.sharedAirPlan(physicsParams(), evaluated.metrics, E.getPreset(state.presetId).name);
+}
+
+function planDoneCount(plan) {
+  let count = 0;
+  for (const role of plan.roles) {
+    for (const item of role.items) {
+      if (planDone.has(`${role.id}:${item.id}`)) count += 1;
+    }
+  }
+  return count;
+}
+
+/**
+ * The shared-air checklist is rebuilt on every solve so its numbers stay
+ * honest; the checked-off set survives because item keys are stable ids.
+ */
+function renderPlan() {
+  const plan = currentPlan();
+  $('planSummary').textContent = plan.summary;
+  $('planGroups').innerHTML = plan.roles.map((role) => {
+    const items = role.items.map((item) => {
+      const key = `${role.id}:${item.id}`;
+      const done = planDone.has(key);
+      return `<li><label class="plan-item${done ? ' is-done' : ''}"><input type="checkbox" data-plan-key="${E.escapeHtml(key)}"${done ? ' checked' : ''}><span>${E.escapeHtml(item.text)}</span></label></li>`;
+    }).join('');
+    return `<section class="plan-group"><h3>${E.escapeHtml(role.label)}</h3><ul class="plan-list">${items}</ul></section>`;
+  }).join('');
+  const total = plan.roles.reduce((n, role) => n + role.items.length, 0);
+  $('planProgress').textContent = `${planDoneCount(plan)} of ${total} shared tasks checked off`;
+  $('planText').value = P.planPlainText(plan, planDone);
 }
 
 function renderCharts() {
@@ -580,6 +631,8 @@ function computeAll() {
   renderVerification();
   renderCharts();
   renderActionCard();
+  renderPlan();
+  renderPhysics();
   renderSensitivity();
   renderRetrofit();
   renderSchoolDay();
@@ -738,6 +791,45 @@ function bindControls() {
   $('briefTamperBtn').addEventListener('click', tamperTestFlow);
   $('selfTestBtn').addEventListener('click', runSelfTests);
   $('printBtn').addEventListener('click', () => window.print());
+  $('planPrint').addEventListener('click', () => {
+    document.body.classList.add('print-plan');
+    const clear = () => document.body.classList.remove('print-plan');
+    window.addEventListener('afterprint', clear, { once: true });
+    window.print();
+    setTimeout(clear, 4000);
+  });
+  $('planCopy').addEventListener('click', async () => {
+    const plan = currentPlan();
+    const text = P.planPlainText(plan, planDone);
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Shared-air plan copied to clipboard');
+      announce('Shared-air plan copied to clipboard.');
+    } catch {
+      const block = document.querySelector('.plan-text-block');
+      if (block) block.open = true;
+      $('planText').focus();
+      $('planText').select();
+      showToast('Copy blocked by the browser; the plain-text plan is open below');
+      announce('Copy blocked by the browser. The plain-text plan is open for manual copying.');
+    }
+  });
+  // Checking a task updates the mark, the counter and the copyable text in
+  // place; the list itself is only rebuilt on a solve so focus is kept.
+  $('planGroups').addEventListener('change', (event) => {
+    const box = event.target.closest('input[data-plan-key]');
+    if (!box) return;
+    const key = box.dataset.planKey;
+    if (box.checked) planDone.add(key);
+    else planDone.delete(key);
+    box.closest('.plan-item').classList.toggle('is-done', box.checked);
+    const plan = currentPlan();
+    const total = plan.roles.reduce((n, role) => n + role.items.length, 0);
+    const done = planDoneCount(plan);
+    $('planProgress').textContent = `${done} of ${total} shared tasks checked off`;
+    $('planText').value = P.planPlainText(plan, planDone);
+    announce(`${done} of ${total} shared tasks checked off.`);
+  });
   $('inspApply').addEventListener('click', () => {
     if (selectedIntervention >= 0) applyIntervention(selectedIntervention);
     else {
@@ -1028,5 +1120,8 @@ window.VentiLab = {
   selfTestSuite: T.selfTestSuite,
   encodeRoom: C.encodeRoom,
   decodeRoom: C.decodeRoom,
+  sharedAirPlan: () => currentPlan(),
+  planPlainText: (plan, done) => P.planPlainText(plan, done),
+  physicsExplainer: () => P.physicsExplainer(physicsParams(), evaluated.metrics),
   recompute,
 };

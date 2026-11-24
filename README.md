@@ -36,6 +36,19 @@ server, or load it from disk in a browser that permits local ES modules.
   closed-window baseline ghost trace, and grey low-occupancy schedule bands.
 - Shares scenarios through a strictly validated URL hash and prints a
   classroom action card.
+- Opens a **How airflow physics works** drawer that walks the eight core
+  equations (outdoor air per person, air changes per hour, exchange time
+  constant, CO2 source rate, CO2 steady state, PM2.5 steady state, equivalent
+  clean air and the Wells-Riley infection dose) with the live classroom
+  numbers substituted into every formula, so a slider move is visible inside
+  the math itself.
+- Builds a **Classroom and community shared-air plan**: a printable and
+  copyable plain-language checklist split into teacher, student and
+  family/community roles, where every task is generated from the solved
+  scenario (window guidance follows the indoor/outdoor PM comparison, device
+  tasks name the installed units, the family ask quotes the live steady
+  state). Checks persist across re-solves, and the plain-text export marks
+  completed tasks with `[x]`.
 - Runs a **one-at-a-time parameter sensitivity (tornado) analysis** where
   outdoor airflow, occupancy, infiltration and device CADR are each perturbed
   20% below and above the current classroom, and the exact closed-form deltas
@@ -104,7 +117,7 @@ classroom:
 
 | Check | Observed |
 |---|---|
-| Tests | **443 passed, 0 failed** |
+| Tests | **463 passed, 0 failed** |
 | CO2 RK4 vs closed form RMSE | **2.38e-8 %** (5.09e-7 ppm), target < 0.05 % |
 | PM2.5 RMSE vs closed form | **4.80e-10 ug/m3** |
 | Integrated quanta RMSE | **1.01e-12** |
@@ -132,7 +145,7 @@ Preset peaks (closed baseline unless the preset specifies ventilation):
 
 ## Browser verification
 
-A 39-check audit ran the live UI in real headless Chrome at 1440x900 and
+A 56-check audit ran the live UI in real headless Chrome at 1440x900 and
 390x844 (zero-dependency CDP harness):
 
 - **Zero console errors, zero uncaught exceptions, zero page-level errors and
@@ -149,11 +162,16 @@ A 39-check audit ran the live UI in real headless Chrome at 1440x900 and
   tamper test rejects an edited copy; the JSON export triggers a real
   `ventilab-brief-<fnv>.json` download and the signature line shows the
   SHA-256 digest.
+- The physics drawer opens on a real click and renders all 8 equation rows
+  with live substituted values; the shared-air plan renders its three role
+  groups, a real checkbox click advances the counter and the `[x]` mark, and
+  the copy and plan-only print controls respond to real pointer clicks.
 - Room bookmark writes a `#room=...` hash; reloading through it restores
   `crBoxes: 2` and the `cross-vent` day selection, and a malformed
   `#room=AAAA` is rejected with the current scenario preserved.
-- Mobile at 390x844 keeps the comparator, school-day chart and self-test
-  panel reachable with 10/10 self-tests on a real click.
+- Mobile at 390x844 keeps the comparator, school-day chart, plan groups,
+  physics rows and self-test panel reachable and inside the viewport with
+  10/10 self-tests on a real click.
 
 Earlier, the demo choreography in `video/steps.json` was replayed in isolated
 headless Chrome against the rebuilt UI at 1920x1080 and again at 1440x900:
@@ -190,6 +208,7 @@ decisions.
 | `src/schoolday.js` | 8:00 AM - 3:30 PM schedule integrator, exact CO2 threshold exceedance and the before/after SVG chart |
 | `src/brief.js` | Signed engineering brief (JSON/CSV/Markdown), integrity verification and solver replay |
 | `src/roomcodec.js` | Strict `#room=` base64url bookmark codec |
+| `src/plan.js` | Shared-air checklist builder and live physics-equation explainer |
 | `src/selftest.js` | In-page self-test suite |
 | `src/sha256.js` | Dependency-free FIPS 180-4 SHA-256 |
 | `src/app.js` | Controls, state, inspector, experiments, keyboard access and DOM wiring |
@@ -200,6 +219,7 @@ decisions.
 | `tests/wave-b.test.mjs` | 18 regression tests for clean-air accounting, exact means, verification and export fixes |
 | `tests/wave-d.test.mjs` | 88 comparator and school-day tests |
 | `tests/wave-e.test.mjs` | 199 SHA-256, brief, bookmark codec, self-test and integration tests |
+| `tests/plan.test.mjs` | 20 shared-air plan and physics-explainer tests |
 | `video/narration.txt`, `video/steps.json` | Demo script and choreography |
 
 ## License

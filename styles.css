@@ -220,6 +220,37 @@ thead th { background: var(--surface-soft); position: sticky; top: 0; color: var
 
 .assumptions { padding: 16px 20px; }
 .assumptions summary { font-size: 14px; font-weight: 740; letter-spacing: -0.015em; cursor: pointer; color: var(--ink); }
+
+/* How airflow physics works: live equation drawer */
+.physics-panel { margin-bottom: 24px; padding: 16px 20px; }
+.physics-panel summary { font-size: 15px; font-weight: 740; letter-spacing: -0.015em; cursor: pointer; color: var(--ink); }
+.physics-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.physics-row { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--surface-soft); padding: 10px 12px; min-width: 0; }
+.physics-row-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.physics-name { font-size: 12px; font-weight: 750; color: var(--ink); }
+.physics-result { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--good-ink); white-space: nowrap; }
+.physics-formula { font-family: var(--mono); font-size: 11.5px; color: var(--ink); margin-top: 6px; overflow-wrap: anywhere; }
+.physics-sub { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 2px; overflow-wrap: anywhere; }
+.physics-why { font-size: 11.5px; color: var(--ink-2); margin-top: 6px; }
+
+/* Classroom and community shared-air plan */
+.plan-summary { font-size: 13px; color: var(--ink-2); margin: 0 0 14px; }
+.plan-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.plan-group { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); padding: 11px 12px; min-width: 0; }
+.plan-group h3 { font-size: 12px; font-weight: 750; margin: 0 0 8px; color: var(--ink-2); }
+.plan-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.plan-item { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--ink-2); line-height: 1.45; cursor: pointer; }
+.plan-item input { flex: none; margin: 2px 0 0; width: 14px; height: 14px; accent-color: var(--accent); }
+.plan-item span { min-width: 0; }
+.plan-item.is-done span { color: var(--ink-3); text-decoration: line-through; }
+.plan-progress { font-size: 12px; color: var(--ink-3); margin: 12px 0 0; font-variant-numeric: tabular-nums; }
+.plan-text-block { margin-top: 10px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+.plan-text-block summary { font-size: 12px; font-weight: 700; color: var(--accent); cursor: pointer; }
+.plan-text {
+  width: 100%; margin-top: 8px; border: 1px solid #bfcfc6; border-radius: 9px;
+  padding: 9px 10px; font-family: var(--mono); font-size: 11px; resize: vertical;
+  background: #fff; color: var(--ink);
+}
 .assume-list { margin: 12px 0 0; padding-left: 19px; font-size: 12.5px; color: var(--ink-2); }
 .assume-list li { margin-bottom: 7px; max-width: 1100px; }
 .assume-list li:last-child { margin-bottom: 0; }
@@ -316,7 +347,7 @@ thead th { background: var(--surface-soft); position: sticky; top: 0; color: var
   .hero-badge strong { font-size: 18px; }
   .hero-badge span { font-size: 11px; }
   .panel { padding: 15px; }
-  .control-grid, .metric-grid, .intervention-list, .verify-grid, .card-grid, .insp-grid { grid-template-columns: 1fr; }
+  .control-grid, .metric-grid, .intervention-list, .verify-grid, .card-grid, .insp-grid, .plan-groups, .physics-list { grid-template-columns: 1fr; }
   .exp-btn { font-size: 12px; padding: 8px 10px; }
   .day-select .select { min-width: 150px; }
   .panel-head { flex-wrap: wrap; }
@@ -326,11 +357,16 @@ thead th { background: var(--surface-soft); position: sticky; top: 0; color: var
 }
 
 @media print {
-  .topbar, .controls-panel, .metrics-panel, .viz-panel, .verify-panel, .sens-panel, .notice, .footer, .toast, .skip-link, .experiments, .assumptions, .retrofit-panel, .schoolday-panel, .brief-panel { display: none !important; }
+  .topbar, .controls-panel, .metrics-panel, .viz-panel, .verify-panel, .sens-panel, .notice, .footer, .toast, .skip-link, .experiments, .assumptions, .retrofit-panel, .schoolday-panel, .brief-panel, .physics-panel, .plan-panel { display: none !important; }
   main { padding: 0; }
   .workspace, .results-column { display: block; }
   .card-panel { border: 0; box-shadow: none; padding: 0; }
   .action-card { border-width: 2px; }
+  body.print-plan .card-panel { display: none !important; }
+  body.print-plan .plan-panel { display: block !important; border: 0; box-shadow: none; padding: 0; }
+  body.print-plan .plan-panel .chart-actions,
+  body.print-plan .plan-progress,
+  body.print-plan .plan-text-block { display: none !important; }
 }
 
 @media (forced-colors: active) {
