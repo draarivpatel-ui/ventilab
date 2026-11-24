@@ -117,7 +117,7 @@ classroom:
 
 | Check | Observed |
 |---|---|
-| Tests | **463 passed, 0 failed** |
+| Tests | **465 passed, 0 failed** |
 | CO2 RK4 vs closed form RMSE | **2.38e-8 %** (5.09e-7 ppm), target < 0.05 % |
 | PM2.5 RMSE vs closed form | **4.80e-10 ug/m3** |
 | Integrated quanta RMSE | **1.01e-12** |
@@ -219,7 +219,7 @@ decisions.
 | `tests/wave-b.test.mjs` | 18 regression tests for clean-air accounting, exact means, verification and export fixes |
 | `tests/wave-d.test.mjs` | 88 comparator and school-day tests |
 | `tests/wave-e.test.mjs` | 199 SHA-256, brief, bookmark codec, self-test and integration tests |
-| `tests/plan.test.mjs` | 20 shared-air plan and physics-explainer tests |
+| `tests/plan.test.mjs` | 22 shared-air plan and physics-explainer tests |
 | `video/narration.txt`, `video/steps.json` | Demo script and choreography |
 
 ## License

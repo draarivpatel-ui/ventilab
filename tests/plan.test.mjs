@@ -193,3 +193,23 @@ test('20. every guided preset produces a coherent plan', () => {
     assert.ok(!/[\u2010\u2011\u2012\u2013\u2014\u2015]/.test(plan.summary + allText(plan)));
   }
 });
+
+test('21. the Wells-Riley row prints the dose that actually yields the printed risk', () => {
+  const p = params();
+  const m = metricsOf(p);
+  const row = P.physicsExplainer(p, m).find((r) => r.id === 'wells-riley');
+  const doseFactor = p.infectious * p.quantaRate * (1 - p.maskEfficiency) * p.breathingFlow;
+  const expected = doseFactor * Math.max(0, m.dose);
+  assert.match(row.substitution, new RegExp(`${P.fmtNum(expected, 3)} quanta`));
+  const impliedRisk = (1 - Math.exp(-expected)) * 100;
+  assert.ok(Math.abs(impliedRisk - m.riskFinal) < 1e-9,
+    `displayed dose implies ${impliedRisk}% but result says ${m.riskFinal}%`);
+});
+
+test('22. the OA-per-person row never prints a rate for an empty room', () => {
+  const empty = { ...params(), students: 0 };
+  const row = P.physicsExplainer(empty, metricsOf(empty)).find((r) => r.id === 'oa-person');
+  assert.equal(row.result, 'no occupants');
+  const full = P.physicsExplainer(params(), metricsOf(params())).find((r) => r.id === 'oa-person');
+  assert.match(full.result, /L\/s/);
+});

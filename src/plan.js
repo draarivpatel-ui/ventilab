@@ -138,6 +138,8 @@ export function physicsExplainer(input = {}, metrics = {}) {
   const quantaCADR = Number.isFinite(metrics.quantaCADR) ? metrics.quantaCADR : equip.quantaCADR;
   const ecaTotal = Number.isFinite(metrics.ecaTotal) ? metrics.ecaTotal : qExchange + quantaCADR;
   const dose = Number.isFinite(metrics.dose) ? metrics.dose : NaN;
+  const doseFactor = p.infectious * p.quantaRate * (1 - p.maskEfficiency) * p.breathingFlow;
+  const doseQuanta = Number.isFinite(dose) ? doseFactor * Math.max(0, dose) : NaN;
   const oaPerPerson = Number.isFinite(metrics.oaPerPersonLps) ? metrics.oaPerPersonLps : 0;
 
   return [
@@ -185,16 +187,20 @@ export function physicsExplainer(input = {}, metrics = {}) {
       id: 'wells-riley',
       name: 'Wells-Riley risk',
       formula: 'P = 1 - exp(-d)',
-      substitution: Number.isFinite(dose) ? `dose d = ${dose.toExponential(2)} quanta` : 'dose d unavailable',
+      substitution: Number.isFinite(dose)
+        ? `d = ${p.infectious} x ${fmtNum(p.quantaRate)} x (1 - ${fmtNum(p.maskEfficiency, 2)}) x ${fmtNum(p.breathingFlow, 2)} x ${dose.toExponential(2)} = ${fmtNum(doseQuanta, 3)} quanta`
+        : 'dose d unavailable',
       result: `${fmtNum(metrics.riskFinal ?? 0, 1)}%`,
-      why: 'd is the integrated quanta dose after masks and clean-air removal; the exponential turns dose into probability.',
+      why: 'd multiplies infector count, emission, mask leakage and breathing into the solved quanta integral; the exponential turns dose into probability.',
     },
     {
       id: 'oa-person',
       name: 'Outdoor air per person',
       formula: 'OA = Q / N / 3.6',
-      substitution: `${fmtNum(qExchange)} / ${p.students} / 3.6`,
-      result: `${fmtNum(oaPerPerson, 1)} L/s`,
+      substitution: p.students > 0
+        ? `${fmtNum(qExchange)} / ${p.students} / 3.6`
+        : `${fmtNum(qExchange)} / 0 occupants`,
+      result: p.students > 0 ? `${fmtNum(oaPerPerson, 1)} L/s` : 'no occupants',
       why: 'The ASHRAE 62.1 classroom guide is about 7 L/s of outdoor air per student.',
     },
     {
