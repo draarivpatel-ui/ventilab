@@ -109,7 +109,7 @@ python3 -m http.server 8000
 Run the deterministic test suite:
 
 ```sh
-node --test tests/
+node --test
 ```
 
 ## Observed results
